@@ -1,0 +1,565 @@
+@page "/statisztika"
+@page "/statisztika/{TuraId:guid}"
+@implements IDisposable
+@inject StatisztikaViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">
+            @(VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes
+                ? $"{VM.KivalasztottEv}. évi összegzés"
+                : "Statisztika & Ranglista")
+        </h1>
+        <p class="fp-subtitle">
+            @(VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes
+                ? "Az adott év összes horgásztúrájának együttes fogási, ranglista- és költségösszesítője."
+                : "Horgász ranglista, fogási eredmények és csalik/napszakok teljesítménye.")
+        </p>
+    </div>
+
+    @if (VM.Turak.Count > 0)
+    {
+        <div class="fp-header-controls">
+            @if (VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes)
+            {
+                <select class="form-select" value="@VM.KivalasztottEv" @onchange="OnEvSelectedAsync" aria-label="Év kiválasztása">
+                    @foreach (var ev in VM.ElerhetoEvek)
+                    {
+                        <option value="@ev">@ev. év összesítése</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <select class="form-select" value="@VM.AktualisTura?.Id" @onchange="OnTuraSelectedAsync" aria-label="Túra kiválasztása">
+                    @foreach (var tura in VM.Turak)
+                    {
+                        <option value="@tura.Id">@tura.Nev</option>
+                    }
+                </select>
+            }
+        </div>
+    }
+</div>
+
+@if (VM.Turak.Count > 0)
+{
+    <div class="fp-segmented mb-3">
+        <button type="button"
+                class="fp-segmented-btn @(VM.AktivNezet == StatisztikaNezetMod.TuraStatisztika ? "active" : string.Empty)"
+                @onclick="@(() => VM.SetNezetAsync(StatisztikaNezetMod.TuraStatisztika))"
+                disabled="@VM.IsLoading">
+            Túra statisztika
+        </button>
+        <button type="button"
+                class="fp-segmented-btn @(VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes ? "active" : string.Empty)"
+                @onclick="@(() => VM.SetNezetAsync(StatisztikaNezetMod.EvVegiOsszegzes))"
+                disabled="@VM.IsLoading">
+            Év végi összegzés
+        </button>
+    </div>
+}
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@if (VM.IsLoading)
+{
+    <LoadingSpinner Message="@(VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes ? $"{VM.KivalasztottEv}. évi összegzés számítása..." : "Statisztikák számítása...")" />
+}
+else if (VM.Turak.Count == 0)
+{
+    <EmptyState Icon="📊"
+                Title="Nincs elemezhető túra"
+                Description="Hozz létre egy túrát a főoldalon a statisztikák megtekintéséhez."
+                ActionText="Ugrás a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else if (VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes && (VM.EvOsszesito is null || VM.EvOsszesito.TurakSzama == 0))
+{
+    <EmptyState Icon="📅"
+                Title="@($"Nincs túra {VM.KivalasztottEv} évben")"
+                Description="Válassz egy másik évet a fenti listából, vagy vegyél fel új túrát erre az évre." />
+}
+else if (VM.MegjelenitettStatisztika is null)
+{
+    <EmptyState Icon="📊"
+                Title="Nincs elemezhető túra"
+                Description="Hozz létre egy túrát a főoldalon a statisztikák megtekintéséhez."
+                ActionText="Ugrás a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else
+{
+    var s = VM.MegjelenitettStatisztika;
+    var isEvVegi = VM.AktivNezet == StatisztikaNezetMod.EvVegiOsszegzes && VM.EvOsszesito is not null;
+
+    @* Év végi összegzés kiemelt év-összefoglaló csempék *@
+    @if (isEvVegi && VM.EvOsszesito is not null)
+    {
+        var evStat = VM.EvOsszesito;
+        <div class="fp-kpi-grid mb-3">
+            <div class="fp-kpi-card">
+                <div class="fp-kpi-label">@evStat.Ev. évi túrák</div>
+                <div class="fp-kpi-value">@evStat.TurakSzama túra</div>
+                <div class="fp-kpi-sub">@evStat.HelyszinekSzama különböző vízterületen</div>
+            </div>
+
+            <div class="fp-kpi-card">
+                <div class="fp-kpi-label">Összes túranap</div>
+                <div class="fp-kpi-value">@evStat.OsszesTuraNap nap</div>
+                <div class="fp-kpi-sub">Vízparton tervezett napok összege</div>
+            </div>
+
+            <div class="fp-kpi-card">
+                <div class="fp-kpi-label">Éves összköltség</div>
+                <div class="fp-kpi-value">@(evStat.OsszesKoltseg > 0 ? VM.FormatOsszeg(evStat.OsszesKoltseg) : "–")</div>
+                <div class="fp-kpi-sub">@(evStat.OsszesKoltseg > 0 ? $"Átlag {VM.FormatOsszeg(evStat.OsszesKoltseg / Math.Max(1, evStat.TurakSzama))} / túra" : "Nincs rögzített költség")</div>
+            </div>
+        </div>
+    }
+
+    @* Kiemelt eredmények – Legnagyobb kifogott hal elöl *@
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-md-4">
+            <div class="fp-card fp-card-spotlight h-100">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <span class="fp-badge fp-badge-accent">
+                        <svg class="fp-icon" style="width:14px;height:14px;" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                        <span>@(isEvVegi ? "Az év legnagyobb hala" : "Legnagyobb hal")</span>
+                    </span>
+                    @if (!string.IsNullOrWhiteSpace(s.LegnagyobbHal?.KategoriaNev))
+                    {
+                        <span class="fp-badge fp-badge-primary">@s.LegnagyobbHal.KategoriaNev</span>
+                    }
+                </div>
+                @if (s.LegnagyobbHal is not null)
+                {
+                    <div class="h4 mb-1">@s.LegnagyobbHal.Halfaj – @s.LegnagyobbHal.SulyKg.ToString("0.##") kg</div>
+                    <div class="small fp-muted">@s.LegnagyobbHal.HosszCm.ToString("0.#") cm · @s.LegnagyobbHal.HorgaszNev</div>
+                    <div class="small fp-muted mt-1">
+                        @s.LegnagyobbHal.Csali · @s.LegnagyobbHal.Idopont.ToString("yyyy.MM.dd. HH:mm")
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(s.LegnagyobbHal.TuraNev))
+                    {
+                        <div class="mt-2">
+                            <span class="fp-badge fp-badge-neutral">@s.LegnagyobbHal.TuraNev</span>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <p class="fp-muted small mb-0">Még nincs súlyra mért fogás.</p>
+                }
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="fp-card h-100">
+                <div class="fp-kpi-label mb-2">Legeredményesebb csali</div>
+                @if (s.LegeredmenyesebbCsaliKg is null && s.LegeredmenyesebbCsaliDb is null)
+                {
+                    <p class="fp-muted small mb-0">Még nincs elegendő fogási adat.</p>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-2">
+                        <div class="pb-2 border-bottom" style="border-color: var(--fp-border) !important;">
+                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                <span class="fp-badge fp-badge-success">Összsúly (kg)</span>
+                                @if (s.LegeredmenyesebbCsaliKg is not null)
+                                {
+                                    <span class="fw-bold">@s.LegeredmenyesebbCsaliKg.OsszSulyKg.ToString("0.##") kg</span>
+                                }
+                            </div>
+                            @if (s.LegeredmenyesebbCsaliKg is not null)
+                            {
+                                <div class="fw-semibold">@s.LegeredmenyesebbCsaliKg.Csali</div>
+                                <div class="small fp-muted">
+                                    @s.LegeredmenyesebbCsaliKg.FogasokSzama db · max @s.LegeredmenyesebbCsaliKg.LegnagyobbSulyKg.ToString("0.##") kg
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="small fp-muted">Még nincs súlyra mért fogás.</div>
+                            }
+                        </div>
+
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                <span class="fp-badge fp-badge-primary">Darabszám (db)</span>
+                                @if (s.LegeredmenyesebbCsaliDb is not null)
+                                {
+                                    <span class="fw-bold">@s.LegeredmenyesebbCsaliDb.FogasokSzama db</span>
+                                }
+                            </div>
+                            @if (s.LegeredmenyesebbCsaliDb is not null)
+                            {
+                                <div class="fw-semibold">@s.LegeredmenyesebbCsaliDb.Csali</div>
+                                @if (s.LegeredmenyesebbCsaliDb.OsszSulyKg > 0)
+                                {
+                                    <div class="small fp-muted">Mért összsúly: @s.LegeredmenyesebbCsaliDb.OsszSulyKg.ToString("0.##") kg</div>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+            <div class="fp-card h-100">
+                <div class="fp-kpi-label mb-2">Legaktívabb napszak</div>
+                @if (s.LegaktivabbNapszakKg is null && s.LegaktivabbNapszakDb is null)
+                {
+                    <p class="fp-muted small mb-0">Még nincs elegendő fogási adat.</p>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-2">
+                        <div class="pb-2 border-bottom" style="border-color: var(--fp-border) !important;">
+                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                <span class="fp-badge fp-badge-success">Összsúly (kg)</span>
+                                @if (s.LegaktivabbNapszakKg is not null)
+                                {
+                                    <span class="fw-bold">@s.LegaktivabbNapszakKg.OsszSulyKg.ToString("0.##") kg</span>
+                                }
+                            </div>
+                            @if (s.LegaktivabbNapszakKg is not null)
+                            {
+                                <div class="fw-semibold">@s.LegaktivabbNapszakKg.Napszak</div>
+                                <div class="small fp-muted">@s.LegaktivabbNapszakKg.FogasokSzama db fogás</div>
+                            }
+                            else
+                            {
+                                <div class="small fp-muted">Még nincs súlyra mért fogás.</div>
+                            }
+                        </div>
+
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                <span class="fp-badge fp-badge-primary">Darabszám (db)</span>
+                                @if (s.LegaktivabbNapszakDb is not null)
+                                {
+                                    <span class="fw-bold">@s.LegaktivabbNapszakDb.FogasokSzama db</span>
+                                }
+                            </div>
+                            @if (s.LegaktivabbNapszakDb is not null)
+                            {
+                                <div class="fw-semibold">@s.LegaktivabbNapszakDb.Napszak</div>
+                                @if (s.LegaktivabbNapszakDb.OsszSulyKg > 0)
+                                {
+                                    <div class="small fp-muted">Mért összsúly: @s.LegaktivabbNapszakDb.OsszSulyKg.ToString("0.##") kg</div>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* KPI összefoglaló (túra statisztikában a túra összköltségével együtt) *@
+    <div class="fp-kpi-grid @(!isEvVegi ? "fp-kpi-grid-4" : string.Empty) mb-4">
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Összes fogás</div>
+            <div class="fp-kpi-value">@s.OsszesFogasDb db</div>
+            <div class="fp-kpi-sub">Mért összsúly: @s.OsszesFogottSulyKg.ToString("0.##") kg</div>
+        </div>
+
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Visszaengedett</div>
+            <div class="fp-kpi-value">@s.VisszaengedettFogasDb db</div>
+            <div class="fp-kpi-sub">Visszaengedett halak</div>
+        </div>
+
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Megtartott</div>
+            <div class="fp-kpi-value">@s.MegtartottFogasDb db</div>
+            <div class="fp-kpi-sub">
+                @(s.MegtartottSulyKg > 0 ? $"Mért súly: {s.MegtartottSulyKg:0.##} kg" : "Megtartott halak")
+            </div>
+            @if (s.MegtartottBontas.Count > 0)
+            {
+                <div class="d-flex flex-wrap gap-1 mt-2 pt-2 border-top" style="border-color: var(--fp-border) !important;">
+                    @foreach (var m in s.MegtartottBontas)
+                    {
+                        <span class="fp-badge fp-badge-neutral">
+                            @m.Nev: @m.MegtartottDb db@(m.MegtartottSulyKg > 0 ? $" ({m.MegtartottSulyKg:0.##} kg)" : string.Empty)
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (!isEvVegi)
+        {
+            <div class="fp-kpi-card">
+                <div class="fp-kpi-label">Túra összköltsége</div>
+                <div class="fp-kpi-value">@(s.TuraOsszKoltseg > 0 ? VM.FormatOsszeg(s.TuraOsszKoltseg) : "–")</div>
+                <div class="fp-kpi-sub">
+                    @if (s.TuraOsszKoltseg > 0 && s.KoltsegPerFo > 0)
+                    {
+                        <span>Átlag @VM.FormatOsszeg(s.KoltsegPerFo) / fő</span>
+                    }
+                    else
+                    {
+                        <span>Nincs rögzített költség</span>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @* Horgász ranglista *@
+    <div class="fp-card mb-4">
+        <h2 class="h5 mb-3">@(isEvVegi ? $"{VM.KivalasztottEv}. évi horgász ranglista" : "Horgász ranglista")</h2>
+        @if (s.HorgaszRanglista.Count == 0)
+        {
+            <EmptyState Icon="👥"
+                        Title="Nincs résztvevő a ranglistához"
+                        Description="Adj hozzá résztvevőket a túrákhoz a ranglista megjelenítéséhez." />
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="fp-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Horgász</th>
+                            <th>Fogás</th>
+                            <th>Megtartott</th>
+                            <th>Összsúly</th>
+                            <th>Max</th>
+                            <th>Átlag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var elem in s.HorgaszRanglista)
+                        {
+                            var rankClass = elem.Helyezes switch
+                            {
+                                1 => "rank-1",
+                                2 => "rank-2",
+                                3 => "rank-3",
+                                _ => string.Empty
+                            };
+
+                            <tr>
+                                <td><span class="fp-rank-pill @rankClass">@elem.Helyezes</span></td>
+                                <td>
+                                    <div class="fw-semibold">@elem.Nev</div>
+                                    <div class="small fp-muted">@elem.Szerepkor</div>
+                                </td>
+                                <td class="fw-semibold">@elem.FogasokSzama db</td>
+                                <td>
+                                    @if (elem.MegtartottDb > 0)
+                                    {
+                                        <span class="fw-semibold">@elem.MegtartottDb db</span>
+                                        @if (elem.MegtartottSulyKg > 0)
+                                        {
+                                            <div class="small fp-muted">@elem.MegtartottSulyKg.ToString("0.##") kg</div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="fp-muted">0 db</span>
+                                    }
+                                </td>
+                                <td class="fw-bold">@(elem.OsszSulyKg > 0 ? $"{elem.OsszSulyKg:0.##} kg" : "–")</td>
+                                <td>@(elem.LegnagyobbHalKg > 0 ? $"{elem.LegnagyobbHalKg:0.##} kg" : "–")</td>
+                                <td>@(elem.AtlagSulyKg > 0 ? $"{elem.AtlagSulyKg:0.##} kg" : "–")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    @* Év végi összegzésnél: az év túráinak részletes bontása *@
+    @if (isEvVegi && VM.EvOsszesito is not null && VM.EvOsszesito.TuraBontas.Count > 0)
+    {
+        <div class="fp-card mb-4">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+                <h2 class="h5 mb-0">Túrák @VM.KivalasztottEv évben</h2>
+                <span class="fp-badge fp-badge-primary">@VM.EvOsszesito.TuraBontas.Count túra</span>
+            </div>
+
+            <div class="table-responsive">
+                <table class="fp-table">
+                    <thead>
+                        <tr>
+                            <th>Túra</th>
+                            <th>Időpont</th>
+                            <th>Fogás</th>
+                            <th>Összsúly</th>
+                            <th>Max</th>
+                            <th>Költség</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in VM.EvOsszesito.TuraBontas)
+                        {
+                            <tr>
+                                <td>
+                                    <button type="button"
+                                            class="fp-btn fp-btn-ghost p-0 text-start fw-semibold"
+                                            style="min-height: auto; color: var(--fp-primary);"
+                                            @onclick="@(() => VM.ChangeTuraAsync(t.TuraId))">
+                                        @t.Nev
+                                    </button>
+                                    <div class="small fp-muted">@t.Helyszin · @t.NapokSzama nap</div>
+                                </td>
+                                <td class="small">@t.KezdoDatum.ToString("MM.dd.") – @t.VegDatum.ToString("MM.dd.")</td>
+                                <td class="fw-semibold">@t.FogasokSzama db</td>
+                                <td class="fw-bold">@(t.OsszSulyKg > 0 ? $"{t.OsszSulyKg:0.##} kg" : "–")</td>
+                                <td>@(t.LegnagyobbHalKg > 0 ? $"{t.LegnagyobbHalKg:0.##} kg" : "–")</td>
+                                <td>@(t.OsszKoltseg > 0 ? VM.FormatOsszeg(t.OsszKoltseg) : "–")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    @* Csalik, napszakok és halfajok bontása *@
+    <div class="row g-3">
+        <div class="col-12 col-lg-6">
+            <div class="fp-card h-100">
+                <h2 class="h5 mb-3">Csalik statisztikája</h2>
+                @if (s.CsaliStatisztikak.Count == 0)
+                {
+                    <p class="fp-muted small mb-0">Még nincs rögzített fogás.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="fp-table">
+                            <thead>
+                                <tr>
+                                    <th>Csali</th>
+                                    <th>Db</th>
+                                    <th>Összsúly</th>
+                                    <th>Max</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in s.CsaliStatisztikak)
+                                {
+                                    <tr>
+                                        <td class="fw-semibold">@c.Csali</td>
+                                        <td>@c.FogasokSzama</td>
+                                        <td>@(c.OsszSulyKg > 0 ? $"{c.OsszSulyKg:0.##} kg" : "–")</td>
+                                        <td>@(c.LegnagyobbSulyKg > 0 ? $"{c.LegnagyobbSulyKg:0.##} kg" : "–")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-6">
+            <div class="fp-card h-100">
+                <h2 class="h5 mb-3">Napszakok &amp; Halfajok</h2>
+                @if (s.NapszakStatisztikak.Count == 0)
+                {
+                    <p class="fp-muted small mb-0">Még nincs rögzített fogás.</p>
+                }
+                else
+                {
+                    <div class="mb-3">
+                        <div class="fp-kpi-label mb-2">Napszakonként</div>
+                        @foreach (var n in s.NapszakStatisztikak)
+                        {
+                            <div class="py-2 border-bottom" style="border-color: var(--fp-border) !important;">
+                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                    <span class="fw-semibold">@n.Napszak</span>
+                                    <span class="fw-bold">@n.FogasokSzama db@(n.OsszSulyKg > 0 ? $" · {n.OsszSulyKg:0.##} kg" : string.Empty)</span>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(n.TopFajokSzoveg))
+                                {
+                                    <div class="small fp-muted mt-1">@n.TopFajokSzoveg</div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div>
+                        <div class="fp-kpi-label mb-2">Halfajok (Főkategória → Alkategória)</div>
+                        <div class="d-flex flex-column gap-2">
+                            @foreach (var kat in s.HalKategoriaStatisztikak)
+                            {
+                                <div class="p-2 px-3 rounded-3 border" style="background-color: var(--fp-surface-alt); border-color: var(--fp-border) !important;">
+                                    <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                        <span class="fp-badge fp-badge-primary">@kat.KategoriaNev</span>
+                                        <span class="fw-bold small">
+                                            @kat.FogasokSzama db@(kat.OsszSulyKg > 0 ? $" · {kat.OsszSulyKg:0.##} kg" : string.Empty)
+                                        </span>
+                                    </div>
+                                    @foreach (var alkat in kat.Alkategoriak)
+                                    {
+                                        <div class="d-flex justify-content-between align-items-center gap-2 small py-1">
+                                            <span>@alkat.Halfaj</span>
+                                            <span class="fp-muted fw-semibold">
+                                                @alkat.FogasokSzama db@(alkat.OsszSulyKg > 0 ? $" · {alkat.OsszSulyKg:0.##} kg (max {alkat.LegnagyobbSulyKg:0.##} kg)" : string.Empty)
+                                            </span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? TuraId { get; set; }
+    private IDisposable? _refreshRegistration;
+
+    protected override void OnInitialized()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await VM.LoadAsync(TuraId);
+    }
+
+    private async Task OnTuraSelectedAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var selectedId))
+        {
+            await VM.ChangeTuraAsync(selectedId);
+        }
+    }
+
+    private async Task OnEvSelectedAsync(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var selectedEv))
+        {
+            await VM.ChangeEvAsync(selectedEv);
+        }
+    }
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

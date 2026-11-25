@@ -1,0 +1,812 @@
+@page "/csomaglista"
+@page "/csomaglista/{TuraId:guid}"
+@implements IDisposable
+@inject CsomaglistaViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject IBackNavigationService BackNavigation
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">Csomaglista</h1>
+        <p class="fp-subtitle">Hozz létre újrahasználható csomaglistákat, amelyeket új vagy meglévő túrákhoz adhatsz hozzá.</p>
+    </div>
+
+    @if (VM.AktivNezet == CsomagNezetMod.TuraCsomaglista && VM.Turak.Count > 0)
+    {
+        <div class="fp-header-controls is-wrap">
+            <select class="form-select" value="@VM.AktualisTura?.Id" @onchange="OnTuraSelectedAsync" aria-label="Túra kiválasztása">
+                @foreach (var tura in VM.Turak)
+                {
+                    <option value="@tura.Id">@tura.Nev</option>
+                }
+            </select>
+
+            @if (VM.Sablonok.Count > 0)
+            {
+                <button type="button" class="fp-btn fp-btn-outline" @onclick="@(() => VM.OpenImportSablonModal())" disabled="@(VM.AktualisTura is null || VM.IsBusy)">
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    <span>Sablon hozzáadása</span>
+                </button>
+            }
+
+            <button type="button" class="fp-btn fp-btn-primary" @onclick="VM.OpenCreateForm" disabled="@(VM.AktualisTura is null || VM.IsBusy)">
+                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                <span>Új tétel</span>
+            </button>
+        </div>
+    }
+    else if (VM.AktivNezet == CsomagNezetMod.Sablonok)
+    {
+        <div class="fp-header-controls">
+            <button type="button" class="fp-btn fp-btn-primary fp-btn-block-mobile" @onclick="VM.OpenCreateSablonForm" disabled="@(VM.IsBusy || VM.SablonTablaHianyzik)">
+                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                <span>Új csomaglista</span>
+            </button>
+        </div>
+    }
+</div>
+
+@* Nézet váltó: Túra csomaglistája vs. Saját csomaglisták (Sablonok) *@
+<div class="fp-segmented mb-3">
+    <button type="button"
+            class="fp-segmented-btn @(VM.AktivNezet == CsomagNezetMod.TuraCsomaglista ? "active" : string.Empty)"
+            @onclick="@(() => VM.SetNezet(CsomagNezetMod.TuraCsomaglista))">
+        Túra csomaglistája @(VM.AktualisTura is not null ? $"({VM.OsszesDb})" : string.Empty)
+    </button>
+    <button type="button"
+            class="fp-segmented-btn @(VM.AktivNezet == CsomagNezetMod.Sablonok ? "active" : string.Empty)"
+            @onclick="@(() => VM.SetNezet(CsomagNezetMod.Sablonok))">
+        Csomaglistáim (@VM.Sablonok.Count)
+    </button>
+</div>
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@if (VM.IsLoading)
+{
+    <LoadingSpinner Message="Csomaglisták betöltése..." />
+}
+else if (VM.AktivNezet == CsomagNezetMod.Sablonok)
+{
+    @if (VM.SablonTablaHianyzik)
+    {
+        <div class="fp-alert fp-alert-warning" role="status">
+            <div>
+                <strong>Adatbázis frissítés szükséges:</strong> Futtasd le a <code>supabase/add_csomaglista_sablonok.sql</code> fájlt a Supabase SQL Editorban az újrahasználható csomaglisták használatához!
+            </div>
+        </div>
+    }
+    else if (VM.Sablonok.Count == 0)
+    {
+        <EmptyState Icon="📋"
+                    Title="Még nincs létrehozott csomaglistád"
+                    Description="Hozz létre saját csomaglistákat (pl. Bojlis alapszett, Konyha, Csónakos felszerelés), amelyeket egy kattintással hozzáadhatsz minden új túrához!"
+                    ActionText="+ Első csomaglista létrehozása"
+                    OnAction="VM.OpenCreateSablonForm" />
+    }
+    else
+    {
+        <div class="row g-3">
+            @* Bal/felső lista: létrehozott csomaglisták *@
+            <div class="col-12 col-lg-5">
+                <div class="d-flex flex-column gap-2">
+                    @foreach (var sablon in VM.Sablonok)
+                    {
+                        var isSelected = VM.KivalasztottSablonId == sablon.Id;
+                        var db = VM.GetSablonTetelSzam(sablon.Id);
+
+                        <div class="fp-card fp-template-card @(isSelected ? "fp-card-active" : string.Empty)"
+                             @onclick="@(() => VM.SelectSablon(sablon.Id))">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div class="min-w-0">
+                                    <div class="fw-bold text-truncate">@sablon.Nev</div>
+                                    @if (!string.IsNullOrWhiteSpace(sablon.Leiras))
+                                    {
+                                        <div class="small fp-muted mt-1">@sablon.Leiras</div>
+                                    }
+                                    <div class="d-flex flex-wrap gap-1 mt-2">
+                                        <span class="fp-badge fp-badge-primary">@db tétel</span>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex gap-1 flex-shrink-0" @onclick:stopPropagation="true">
+                                    @if (VM.AktualisTura is not null && db > 0)
+                                    {
+                                        <button type="button"
+                                                class="fp-btn fp-btn-icon fp-btn-outline"
+                                                @onclick="@(() => VM.OpenImportSablonModal(sablon.Id))"
+                                                aria-label="Hozzáadás a túrához"
+                                                title="Hozzáadás az aktív túrához">
+                                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                                        </button>
+                                    }
+                                    <button type="button"
+                                            class="fp-btn fp-btn-icon fp-btn-outline"
+                                            @onclick="@(() => VM.OpenEditSablonForm(sablon))"
+                                            aria-label="Szerkesztés"
+                                            title="Lista átnevezése">
+                                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                                    </button>
+                                    <button type="button"
+                                            class="fp-btn fp-btn-icon fp-btn-danger-soft"
+                                            @onclick="@(() => VM.RequestDeleteSablon(sablon))"
+                                            aria-label="Törlés"
+                                            title="Lista törlése">
+                                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @* Jobb/alsó panel: kiválasztott csomaglista tételei *@
+            <div class="col-12 col-lg-7">
+                @if (VM.KivalasztottSablon is not null)
+                {
+                    var aktivSablon = VM.KivalasztottSablon;
+                    var tetelek = VM.KivalasztottSablonTetelei;
+
+                    <div class="fp-card">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                            <div class="min-w-0">
+                                <h2 class="h5 mb-0 text-truncate">@aktivSablon.Nev</h2>
+                                <div class="small fp-muted">@tetelek.Count tétel ebben a csomaglistában</div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                @if (VM.AktualisTura is not null && tetelek.Count > 0)
+                                {
+                                    <button type="button"
+                                            class="fp-btn fp-btn-sm fp-btn-outline"
+                                            @onclick="@(() => VM.OpenImportSablonModal(aktivSablon.Id))"
+                                            disabled="@VM.IsBusy">
+                                        <span>Hozzáadás túrához</span>
+                                    </button>
+                                }
+                                <button type="button"
+                                        class="fp-btn fp-btn-sm fp-btn-primary"
+                                        @onclick="@(() => VM.OpenCreateSablonTetelForm(aktivSablon.Id))"
+                                        disabled="@VM.IsBusy">
+                                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                                    <span>Tétel felvétele</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        @if (tetelek.Count == 0)
+                        {
+                            <EmptyState Icon="🎒"
+                                        Title="Ez a csomaglista még üres"
+                                        Description="Adj hozzá felszereléseket ehhez a listához, hogy új túra létrehozásakor egy kattintással be tudd tenni őket."
+                                        ActionText="+ Első tétel hozzáadása"
+                                        OnAction="@(() => VM.OpenCreateSablonTetelForm(aktivSablon.Id))" />
+                        }
+                        else
+                        {
+                            <div class="d-flex flex-column gap-2">
+                                @foreach (var t in tetelek)
+                                {
+                                    <div class="fp-pack-row">
+                                        <div class="flex-grow-1 min-w-0">
+                                            <div class="fw-bold fp-item-title">@t.Nev</div>
+                                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                                <span class="fp-badge @(t.KozosE ? "fp-badge-primary" : "fp-badge-neutral")">
+                                                    @(t.KozosE ? "Közös" : "Egyéni")
+                                                </span>
+                                                <span class="fp-badge fp-badge-neutral">@t.Kategoria</span>
+                                                <span class="fp-badge fp-badge-neutral">@t.Mennyiseg db</span>
+                                            </div>
+                                        </div>
+
+                                        <div class="d-flex gap-1 flex-shrink-0">
+                                            <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="@(() => VM.OpenEditSablonTetelForm(t))" aria-label="Szerkesztés" title="Szerkesztés">
+                                                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                                            </button>
+                                            <button type="button" class="fp-btn fp-btn-icon fp-btn-danger-soft" @onclick="@(() => VM.RequestDeleteSablonTetel(t))" aria-label="Törlés" title="Törlés">
+                                                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+else if (VM.AktualisTura is null)
+{
+    <EmptyState Icon="🎒"
+                Title="Nincs kiválasztott túra"
+                Description="A túra csomaglistájához először hozz létre egy horgásztúrát, vagy válts a „Csomaglistáim” fülre és készíts előre csomaglistákat!"
+                ActionText="Ugrás a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else
+{
+    @* Élő bepakolási állapot kártya *@
+    <div class="fp-card mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <div>
+                <span class="fw-bold">Bepakoltság: @VM.BepakolasiSzazalek.ToString("0.#")%</span>
+                <span class="fp-muted small ms-1">(@VM.BepakoltDb / @VM.OsszesDb tétel)</span>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-1">
+                <span class="fp-badge fp-badge-primary">Közös: @VM.KozosDb</span>
+                <span class="fp-badge fp-badge-neutral">Egyéni: @VM.EgyeniDb</span>
+                <span class="fp-badge fp-badge-neutral">Összesen: @VM.OsszesMennyisegDb db</span>
+                @if (VM.Felszerelesek.Count > 0 && !VM.SablonTablaHianyzik)
+                {
+                    <button type="button"
+                            class="fp-btn fp-btn-sm fp-btn-outline ms-1"
+                            @onclick="VM.OpenSaveAsSablonModal"
+                            disabled="@VM.IsBusy"
+                            title="Aktuális lista mentése újrahasználható csomaglistaként">
+                        Mentés listaként
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="fp-progress">
+            <div class="fp-progress-bar @(VM.BepakolasiSzazalek >= 100 ? "is-success" : VM.BepakolasiSzazalek >= 50 ? "is-warning" : string.Empty)"
+                 style="width: @(VM.BepakolasiSzazalek.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%;">
+            </div>
+        </div>
+    </div>
+
+    @* Keresés és szűrés sáv *@
+    <div class="fp-card mb-3">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-12 col-md-5">
+                <input type="search"
+                       class="form-control"
+                       placeholder="Keresés név, kategória vagy személy alapján..."
+                       @bind="VM.KeresesiKifejezes"
+                       @bind:event="oninput" />
+            </div>
+            <div class="col-12 col-sm-6 col-md-3">
+                <select class="form-select"
+                        @bind="VM.SzurtKategoria"
+                        aria-label="Szűrés kategória szerint">
+                    <option value="">Minden kategória</option>
+                    @foreach (var kat in VM.ElerhetoKategoriak)
+                    {
+                        <option value="@kat">@kat</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-sm-6 col-md-4 d-flex align-items-center justify-content-sm-end gap-2">
+                <button type="button"
+                        class="fp-chip flex-grow-1 flex-sm-grow-0 justify-content-center @(VM.CsakNemBepakoltak ? "active" : string.Empty)"
+                        @onclick="VM.ToggleCsakNemBepakoltak">
+                    Csak hiányzók
+                </button>
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-ghost" @onclick="VM.ResetFilters">
+                    Alaphelyzet
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-chip-scroll">
+            <button type="button"
+                    class="fp-chip @(VM.SzuroMod == CsomagSzuroMod.Mind ? "active" : string.Empty)"
+                    @onclick="VM.SetFilterMind">
+                Mind (@VM.Felszerelesek.Count)
+            </button>
+            <button type="button"
+                    class="fp-chip @(VM.SzuroMod == CsomagSzuroMod.CsakKozos ? "active" : string.Empty)"
+                    @onclick="VM.SetFilterCsakKozos">
+                Csak közös
+            </button>
+            @foreach (var resztvevo in VM.Resztvevok)
+            {
+                <button type="button"
+                        class="fp-chip @(VM.SzuroMod == CsomagSzuroMod.AdottSzemely && VM.SzurtResztvevoId == resztvevo.Id ? "active" : string.Empty)"
+                        @onclick="@(() => VM.SetFilterSzemely(resztvevo.Id))">
+                    @resztvevo.Nev
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (VM.Felszerelesek.Count == 0)
+    {
+        <div class="fp-empty">
+            <div class="fp-empty-badge" aria-hidden="true">📦</div>
+            <h3 class="h5 mb-2">Üres a túra csomaglistája</h3>
+            <p class="fp-muted mb-3">
+                Adj hozzá egy vagy több előre létrehozott csomaglistát, vagy vegyél fel egyesével tételeket.
+            </p>
+            <div class="d-flex flex-wrap justify-content-center gap-2">
+                @if (VM.Sablonok.Count > 0)
+                {
+                    <button type="button" class="fp-btn fp-btn-primary" @onclick="@(() => VM.OpenImportSablonModal())">
+                        + Sablon csomaglista hozzáadása
+                    </button>
+                }
+                else if (!VM.SablonTablaHianyzik)
+                {
+                    <button type="button" class="fp-btn fp-btn-outline" @onclick="@(() => VM.SetNezet(CsomagNezetMod.Sablonok))">
+                        Csomaglista sablon létrehozása
+                    </button>
+                }
+                <button type="button" class="fp-btn @(VM.Sablonok.Count > 0 ? "fp-btn-outline" : "fp-btn-primary")" @onclick="VM.OpenCreateForm">
+                    + Egyéni tétel felvétele
+                </button>
+            </div>
+        </div>
+    }
+    else if (VM.SzurtFelszerelesek.Count == 0)
+    {
+        <EmptyState Icon="🔍"
+                    Title="Nincs a szűrésnek megfelelő tétel"
+                    Description="Próbálj meg más keresőszót vagy szűrőt választani."
+                    ActionText="Szűrők alaphelyzetbe"
+                    OnAction="VM.ResetFilters" />
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-2">
+            @foreach (var tetel in VM.SzurtFelszerelesek)
+            {
+                <div class="fp-pack-row @(tetel.Bepakolva ? "is-packed" : string.Empty)">
+                    <button type="button"
+                            class="fp-check-btn @(tetel.Bepakolva ? "checked" : string.Empty)"
+                            disabled="@VM.IsBusy"
+                            @onclick="@(() => VM.ToggleBepakolvaAsync(tetel))"
+                            aria-pressed="@tetel.Bepakolva"
+                            aria-label="@($"{tetel.Nev} bepakolva")">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                    </button>
+
+                    <div class="flex-grow-1 min-w-0">
+                        <div class="fw-bold fp-item-title">@tetel.Nev</div>
+                        <div class="d-flex flex-wrap gap-1 mt-1">
+                            <span class="fp-badge @(tetel.KozosE ? "fp-badge-primary" : "fp-badge-neutral")">
+                                @(tetel.KozosE ? "Közös" : VM.GetTulajdonosNev(tetel))
+                            </span>
+                            <span class="fp-badge fp-badge-neutral">@tetel.Kategoria</span>
+                            <span class="fp-badge fp-badge-neutral">@tetel.Mennyiseg db</span>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-1 flex-shrink-0">
+                        <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="@(() => VM.OpenEditForm(tetel))" aria-label="Szerkesztés" title="Szerkesztés">
+                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                        </button>
+                        <button type="button" class="fp-btn fp-btn-icon fp-btn-danger-soft" @onclick="@(() => VM.RequestDeleteAsync(tetel))" aria-label="Törlés" title="Törlés">
+                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@* 1. Túra felszerelés létrehozás / szerkesztés modal *@
+@if (VM.IsFormOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">@(VM.IsEditMode ? "Felszerelés szerkesztése" : "Új felszerelés")</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseForm" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <EditForm Model="VM.SzerkesztettTetel" OnValidSubmit="HandleSaveAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="tetel-nev">Felszerelés neve</label>
+                    <InputText id="tetel-nev" class="form-control" @bind-Value="VM.SzerkesztettTetel.Nev" placeholder="pl. Bojlis sátor, merítőháló" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettTetel.Nev)" />
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-8">
+                        <label class="form-label" for="tetel-kat">Kategória</label>
+                        <InputSelect id="tetel-kat" class="form-select" @bind-Value="VM.SzerkesztettTetel.Kategoria">
+                            @foreach (var kat in CsomaglistaViewModel.Kategoriak)
+                            {
+                                <option value="@kat">@kat</option>
+                            }
+                        </InputSelect>
+                        <ValidationMessage For="@(() => VM.SzerkesztettTetel.Kategoria)" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label" for="tetel-mennyiseg">Darab</label>
+                        <InputNumber id="tetel-mennyiseg" class="form-control" @bind-Value="VM.SzerkesztettTetel.Mennyiseg" />
+                        <ValidationMessage For="@(() => VM.SzerkesztettTetel.Mennyiseg)" />
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label d-block">Típus</label>
+                    <div class="fp-segmented">
+                        <button type="button"
+                                class="fp-segmented-btn @(VM.SzerkesztettTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnKozosChanged(true))">
+                            Közös felszerelés
+                        </button>
+                        <button type="button"
+                                class="fp-segmented-btn @(!VM.SzerkesztettTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnKozosChanged(false))">
+                            Egyéni felszerelés
+                        </button>
+                    </div>
+                </div>
+
+                @if (!VM.SzerkesztettTetel.KozosE)
+                {
+                    <div class="mb-3">
+                        <label class="form-label" for="tetel-resztvevo">Felelős résztvevő</label>
+                        <InputSelect id="tetel-resztvevo" class="form-select" @bind-Value="VM.SzerkesztettTetel.ResztvevoId">
+                            <option value="">-- Válassz résztvevőt --</option>
+                            @foreach (var r in VM.Resztvevok)
+                            {
+                                <option value="@r.Id">@r.Nev (@r.Szerepkor)</option>
+                            }
+                        </InputSelect>
+                        <ValidationMessage For="@(() => VM.SzerkesztettTetel.ResztvevoId)" />
+                    </div>
+                }
+
+                <div class="form-check form-switch mb-4">
+                    <InputCheckbox id="tetel-bepakolva" class="form-check-input" @bind-Value="VM.SzerkesztettTetel.Bepakolva" />
+                    <label class="form-check-label fw-semibold" for="tetel-bepakolva">Már be van pakolva</label>
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseForm" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : "Mentés")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@* 2. Újrahasználható csomaglista (sablon) létrehozás / szerkesztés modal *@
+@if (VM.IsSablonFormOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">@(VM.IsSablonEditMode ? "Csomaglista szerkesztése" : "Új csomaglista")</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseSablonForm" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <EditForm Model="VM.SzerkesztettSablon" OnValidSubmit="HandleSaveSablonAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="sablon-nev">Csomaglista neve</label>
+                    <InputText id="sablon-nev" class="form-control" @bind-Value="VM.SzerkesztettSablon.Nev" placeholder="pl. Bojlis alapszett, Konyha, Csónakos" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettSablon.Nev)" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="sablon-leiras">Leírás (opcionális)</label>
+                    <InputText id="sablon-leiras" class="form-control" @bind-Value="VM.SzerkesztettSablon.Leiras" placeholder="pl. Többnapos túrákra szükséges közös tábori felszerelés" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettSablon.Leiras)" />
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseSablonForm" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : "Mentés")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@* 3. Sablon tétel létrehozás / szerkesztés modal *@
+@if (VM.IsSablonTetelFormOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">@(VM.IsSablonTetelEditMode ? "Sablon tétel szerkesztése" : "Új tétel a csomaglistába")</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseSablonTetelForm" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <EditForm Model="VM.SzerkesztettSablonTetel" OnValidSubmit="HandleSaveSablonTetelAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="st-nev">Felszerelés neve</label>
+                    <InputText id="st-nev" class="form-control" @bind-Value="VM.SzerkesztettSablonTetel.Nev" placeholder="pl. Gázfőző + palack, pontymatrac" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettSablonTetel.Nev)" />
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-8">
+                        <label class="form-label" for="st-kat">Kategória</label>
+                        <InputSelect id="st-kat" class="form-select" @bind-Value="VM.SzerkesztettSablonTetel.Kategoria">
+                            @foreach (var kat in CsomaglistaViewModel.Kategoriak)
+                            {
+                                <option value="@kat">@kat</option>
+                            }
+                        </InputSelect>
+                        <ValidationMessage For="@(() => VM.SzerkesztettSablonTetel.Kategoria)" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label" for="st-mennyiseg">Darab</label>
+                        <InputNumber id="st-mennyiseg" class="form-control" @bind-Value="VM.SzerkesztettSablonTetel.Mennyiseg" />
+                        <ValidationMessage For="@(() => VM.SzerkesztettSablonTetel.Mennyiseg)" />
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label d-block">Alapértelmezett típus</label>
+                    <div class="fp-segmented">
+                        <button type="button"
+                                class="fp-segmented-btn @(VM.SzerkesztettSablonTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnSablonTetelKozosChanged(true))">
+                            Közös felszerelés
+                        </button>
+                        <button type="button"
+                                class="fp-segmented-btn @(!VM.SzerkesztettSablonTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnSablonTetelKozosChanged(false))">
+                            Egyéni felszerelés
+                        </button>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseSablonTetelForm" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : "Mentés")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@* 4. Sablon csomaglisták hozzáadása az aktív túrához modal *@
+@if (VM.IsImportSablonOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h3 class="h5 mb-0">Csomaglisták hozzáadása</h3>
+                    <div class="small fp-muted">Túra: @VM.AktualisTura?.Nev</div>
+                </div>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseImportSablonModal" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <AlertBanner ErrorMessage="@VM.ErrorMessage" OnDismiss="@VM.ClearMessages" />
+
+            <div class="fp-template-pick-list mb-3">
+                @foreach (var s in VM.Sablonok)
+                {
+                    var isChecked = VM.ImportKivalasztottSablonIds.Contains(s.Id);
+                    var db = VM.GetSablonTetelSzam(s.Id);
+
+                    <button type="button"
+                            class="fp-template-pick-item @(isChecked ? "is-selected" : string.Empty)"
+                            @onclick="@(() => VM.ToggleImportSablon(s.Id))">
+                        <span class="fp-check-btn @(isChecked ? "checked" : string.Empty)" aria-hidden="true">
+                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+                        </span>
+                        <div class="flex-grow-1 min-w-0 text-start">
+                            <div class="fw-semibold text-truncate">@s.Nev</div>
+                            @if (!string.IsNullOrWhiteSpace(s.Leiras))
+                            {
+                                <div class="small fp-muted text-truncate">@s.Leiras</div>
+                            }
+                        </div>
+                        <span class="fp-badge fp-badge-neutral flex-shrink-0">@db tétel</span>
+                    </button>
+                }
+            </div>
+
+            @if (VM.Resztvevok.Count > 0)
+            {
+                <div class="mb-3">
+                    <label class="form-label" for="import-resztvevo">Egyéni tételek felelőse</label>
+                    <select id="import-resztvevo" class="form-select" @bind="VM.ImportEgyeniResztvevoIdString">
+                        @foreach (var r in VM.Resztvevok)
+                        {
+                            <option value="@r.Id.ToString("D")">@r.Nev (@r.Szerepkor)</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseImportSablonModal" disabled="@VM.IsBusy">Mégse</button>
+                <button type="button"
+                        class="fp-btn fp-btn-primary order-1 order-sm-2"
+                        @onclick="@(() => VM.ApplySelectedSablonokToTuraAsync())"
+                        disabled="@(VM.IsBusy || VM.ImportKivalasztottSablonIds.Count == 0)">
+                    @(VM.IsBusy ? "Hozzáadás..." : $"Hozzáadás ({VM.ImportKivalasztottTetelSzam} tétel)")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* 5. Aktuális túra listájának mentése sablonként modal *@
+@if (VM.IsSaveAsSablonOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">Mentés újrahasználható listaként</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseSaveAsSablonModal" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <EditForm Model="VM.MentesSablonForm" OnValidSubmit="HandleSaveCurrentAsSablonAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="save-sablon-nev">Új csomaglista neve</label>
+                    <InputText id="save-sablon-nev" class="form-control" @bind-Value="VM.MentesSablonForm.Nev" />
+                    <ValidationMessage For="@(() => VM.MentesSablonForm.Nev)" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="save-sablon-leiras">Leírás (opcionális)</label>
+                    <InputText id="save-sablon-leiras" class="form-control" @bind-Value="VM.MentesSablonForm.Leiras" />
+                    <ValidationMessage For="@(() => VM.MentesSablonForm.Leiras)" />
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseSaveAsSablonModal" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : $"Mentés ({VM.Felszerelesek.Count} tétel)")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<ConfirmDialog IsVisible="@(VM.TorlesreVaroTetel is not null)"
+               IsBusy="@VM.IsBusy"
+               Title="Felszerelés törlése"
+               Message="@($"Biztosan törlöd a(z) „{VM.TorlesreVaroTetel?.Nev}” tételt a csomaglistáról?")"
+               ConfirmText="Törlés"
+               OnConfirm="@(() => VM.ConfirmDeleteAsync())"
+               OnCancel="VM.CancelDelete" />
+
+<ConfirmDialog IsVisible="@(VM.TorlesreVaroSablon is not null)"
+               IsBusy="@VM.IsBusy"
+               Title="Csomaglista törlése"
+               Message="@($"Biztosan törlöd a(z) „{VM.TorlesreVaroSablon?.Nev}” újrahasználható csomaglistát és az összes tételét? A már korábban létrehozott túrák felszerelései megmaradnak.")"
+               ConfirmText="Törlés"
+               OnConfirm="@(() => VM.ConfirmDeleteSablonAsync())"
+               OnCancel="VM.CancelDeleteSablon" />
+
+<ConfirmDialog IsVisible="@(VM.TorlesreVaroSablonTetel is not null)"
+               IsBusy="@VM.IsBusy"
+               Title="Sablon tétel törlése"
+               Message="@($"Biztosan törlöd a(z) „{VM.TorlesreVaroSablonTetel?.Nev}” tételt ebből a csomaglistából?")"
+               ConfirmText="Törlés"
+               OnConfirm="@(() => VM.ConfirmDeleteSablonTetelAsync())"
+               OnCancel="VM.CancelDeleteSablonTetel" />
+
+@code {
+    [Parameter] public Guid? TuraId { get; set; }
+    [SupplyParameterFromQuery(Name = "tab")] public string? Tab { get; set; }
+    private IDisposable? _refreshRegistration;
+    private IDisposable? _backRegistration;
+
+    protected override void OnInitialized()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+        _backRegistration = BackNavigation.RegisterOverlayHandler(TryCloseOverlay);
+    }
+
+    private bool TryCloseOverlay()
+    {
+        if (VM.TorlesreVaroTetel is not null)
+        {
+            _ = InvokeAsync(VM.CancelDelete);
+            return true;
+        }
+
+        if (VM.TorlesreVaroSablon is not null)
+        {
+            _ = InvokeAsync(VM.CancelDeleteSablon);
+            return true;
+        }
+
+        if (VM.TorlesreVaroSablonTetel is not null)
+        {
+            _ = InvokeAsync(VM.CancelDeleteSablonTetel);
+            return true;
+        }
+
+        if (VM.IsImportSablonOpen)
+        {
+            _ = InvokeAsync(VM.CloseImportSablonModal);
+            return true;
+        }
+
+        if (VM.IsSaveAsSablonOpen)
+        {
+            _ = InvokeAsync(VM.CloseSaveAsSablonModal);
+            return true;
+        }
+
+        if (VM.IsSablonTetelFormOpen)
+        {
+            _ = InvokeAsync(VM.CloseSablonTetelForm);
+            return true;
+        }
+
+        if (VM.IsSablonFormOpen)
+        {
+            _ = InvokeAsync(VM.CloseSablonForm);
+            return true;
+        }
+
+        if (VM.IsFormOpen)
+        {
+            _ = InvokeAsync(VM.CloseForm);
+            return true;
+        }
+
+        return false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var openSablonok = string.Equals(Tab, "sablonok", StringComparison.OrdinalIgnoreCase);
+        await VM.LoadAsync(TuraId, openSablonok);
+    }
+
+    private async Task OnTuraSelectedAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var selectedId))
+        {
+            await VM.ChangeTuraAsync(selectedId);
+        }
+    }
+
+    private Task HandleSaveAsync() => VM.SaveTetelAsync();
+    private Task HandleSaveSablonAsync() => VM.SaveSablonAsync();
+    private Task HandleSaveSablonTetelAsync() => VM.SaveSablonTetelAsync();
+    private Task HandleSaveCurrentAsSablonAsync() => VM.SaveCurrentTuraAsSablonAsync();
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _backRegistration?.Dispose();
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

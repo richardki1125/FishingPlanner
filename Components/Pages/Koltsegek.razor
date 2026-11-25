@@ -1,0 +1,469 @@
+@page "/koltsegek"
+@page "/koltsegek/{TuraId:guid}"
+@implements IDisposable
+@inject KoltsegekViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject IBackNavigationService BackNavigation
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">Költségek</h1>
+        <p class="fp-subtitle">Költségkategóriák tervezése, túra összköltsége és személyenkénti leosztása.</p>
+    </div>
+
+    @if (VM.Turak.Count > 0)
+    {
+        <div class="fp-header-controls is-wrap">
+            <select class="form-select" value="@VM.AktualisTura?.Id" @onchange="OnTuraSelectedAsync" aria-label="Túra kiválasztása">
+                @foreach (var tura in VM.Turak)
+                {
+                    <option value="@tura.Id">@tura.Nev</option>
+                }
+            </select>
+
+            <div class="fp-currency-pills" role="group" aria-label="Pénznem">
+                @foreach (var p in KoltsegekViewModel.Penznemek)
+                {
+                    <button type="button"
+                            class="fp-currency-btn @(string.Equals(VM.Penznem, p, StringComparison.OrdinalIgnoreCase) ? "active" : string.Empty)"
+                            @onclick="@(() => VM.SetPenznemAsync(p))">
+                        @p
+                    </button>
+                }
+            </div>
+
+            <button type="button" class="fp-btn fp-btn-primary" @onclick="@(() => VM.OpenCreateForm())" disabled="@(VM.AktualisTura is null || VM.IsBusy)">
+                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                <span>Új költség</span>
+            </button>
+        </div>
+    }
+</div>
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@if (VM.IsLoading)
+{
+    <LoadingSpinner Message="Költségek betöltése..." />
+}
+else if (VM.AktualisTura is null)
+{
+    <EmptyState Icon="💰"
+                Title="Nincs kiválasztott túra"
+                Description="A költségek tervezéséhez először hozz létre egy horgásztúrát a főoldalon."
+                ActionText="Ugrás a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else
+{
+    @* Összesítő KPI kártyák *@
+    <div class="fp-kpi-grid mb-3">
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Túra összköltsége</div>
+            <div class="fp-kpi-value">@VM.FormatOsszeg(VM.OsszKoltseg)</div>
+            <div class="fp-kpi-sub">
+                Közös: @VM.FormatOsszeg(VM.KozosOsszKoltseg) · Egyéni: @VM.FormatOsszeg(VM.EgyeniOsszKoltseg)
+            </div>
+        </div>
+
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Közös költség / fő</div>
+            <div class="fp-kpi-value">@VM.FormatOsszeg(VM.KozosKoltsegPerFo)</div>
+            <div class="fp-kpi-sub">
+                @(VM.AktivLetszam > 0 ? $"{VM.AktivLetszam} aktív résztvevő között osztva" : "Nincs aktív résztvevő a túrán")
+            </div>
+        </div>
+
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Átlag költség / fő</div>
+            <div class="fp-kpi-value">@VM.FormatOsszeg(VM.AtlagKoltsegPerFo)</div>
+            <div class="fp-kpi-sub">
+                Napi összköltség (@VM.AktualisTura.NapokSzama nap): @VM.FormatOsszeg(VM.NapiKoltseg) / nap
+            </div>
+        </div>
+    </div>
+
+    @* Személyenkénti leosztás kártya *@
+    <div class="fp-card mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+                <h2 class="h5 mb-0">Személyenkénti leosztás</h2>
+                <div class="small fp-muted">Kinek mennyi volt a teljes költsége (közös rész + saját tételek)</div>
+            </div>
+            @if (VM.AktivLetszam > 0)
+            {
+                <span class="fp-badge fp-badge-primary">@VM.AktivLetszam aktív fő</span>
+            }
+        </div>
+
+        @if (VM.SzemelyenkentiLeosztas.Count == 0)
+        {
+            <p class="small fp-muted mb-0">
+                Adj hozzá résztvevőket a túrához a főoldalon, hogy lásd a személyenkénti költségmegoszlást.
+            </p>
+        }
+        else
+        {
+            <div class="d-flex flex-column gap-3">
+                @foreach (var szemely in VM.SzemelyenkentiLeosztas)
+                {
+                    var initial = !string.IsNullOrWhiteSpace(szemely.Nev) ? szemely.Nev[..1] : "H";
+                    <div class="p-3 rounded-3 border" style="background-color: var(--fp-surface-alt); border-color: var(--fp-border) !important;">
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                            <div class="d-flex align-items-center gap-2 min-w-0">
+                                @if (!string.IsNullOrWhiteSpace(szemely.ProfilkepUrl))
+                                {
+                                    <img src="@szemely.ProfilkepUrl" alt="@szemely.Nev" class="fp-catch-angler-avatar" />
+                                }
+                                else
+                                {
+                                    <span class="fp-catch-angler-avatar fp-catch-angler-fallback">@initial</span>
+                                }
+                                <div class="min-w-0">
+                                    <div class="fw-bold text-truncate">
+                                        @szemely.Nev
+                                        @if (!szemely.AktivE)
+                                        {
+                                            <span class="fp-badge fp-badge-warning ms-1">Inaktív</span>
+                                        }
+                                    </div>
+                                    <div class="small fp-muted text-truncate">@szemely.Szerepkor</div>
+                                </div>
+                            </div>
+
+                            <div class="text-end flex-shrink-0">
+                                <div class="fp-cost-amount">@VM.FormatOsszeg(szemely.OsszesKoltseg)</div>
+                                <div class="small fp-muted">@szemely.AranySzazalek.ToString("0.#")%</div>
+                            </div>
+                        </div>
+
+                        <div class="fp-progress mb-2">
+                            <div class="fp-progress-bar"
+                                 style="width: @szemely.AranySzazalek.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%;">
+                            </div>
+                        </div>
+
+                        <div class="d-flex flex-wrap gap-1">
+                            <span class="fp-badge fp-badge-neutral">Közös rész: @VM.FormatOsszeg(szemely.KozosResz)</span>
+                            <span class="fp-badge fp-badge-neutral">Egyéni: @VM.FormatOsszeg(szemely.EgyeniKoltseg)</span>
+                            @if (VM.VanFizetoMegadva)
+                            {
+                                <span class="fp-badge fp-badge-neutral">Fizetett: @VM.FormatOsszeg(szemely.BefizetettOsszeg)</span>
+                                <span class="fp-badge @(szemely.Egyenleg >= 1m ? "fp-badge-success" : szemely.Egyenleg <= -1m ? "fp-badge-warning" : "fp-badge-neutral")">
+                                    Egyenleg: @VM.FormatEgyenleg(szemely.Egyenleg)
+                                </span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (VM.ElszamolasiUtalasok.Count > 0)
+            {
+                <div class="fp-settlement-box mt-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-2">
+                        <span class="fw-bold small">Elszámolási javaslat</span>
+                        @if (!VM.MindenTetelnelVanFizeto)
+                        {
+                            <span class="small fp-muted">Csak a megadott fizetővel rögzített tételek alapján</span>
+                        }
+                    </div>
+                    <div class="d-flex flex-column gap-1">
+                        @foreach (var utalas in VM.ElszamolasiUtalasok)
+                        {
+                            <div class="fp-settlement-row">
+                                <span><strong>@utalas.KiFizetNev</strong> → <strong>@utalas.KinekFizetNev</strong></span>
+                                <span class="fw-bold" style="color: var(--fp-primary);">@VM.FormatOsszeg(utalas.Osszeg)</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    @* Költségmezők keresése és szűrése *@
+    <div class="fp-card mb-3">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-12 col-md-8">
+                <input type="search"
+                       class="form-control"
+                       placeholder="Keresés költségkategória, megjegyzés vagy személy alapján..."
+                       @bind="VM.KeresesiKifejezes"
+                       @bind:event="oninput" />
+            </div>
+            <div class="col-12 col-md-4 d-flex justify-content-md-end">
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-ghost w-100 w-md-auto" @onclick="VM.ResetFilters">
+                    Szűrők alaphelyzetbe
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-chip-scroll">
+            <button type="button"
+                    class="fp-chip @(VM.SzuroMod == KoltsegSzuroMod.Mind ? "active" : string.Empty)"
+                    @onclick="VM.SetFilterMind">
+                Mind (@VM.Koltsegek.Count)
+            </button>
+            <button type="button"
+                    class="fp-chip @(VM.SzuroMod == KoltsegSzuroMod.CsakKozos ? "active" : string.Empty)"
+                    @onclick="VM.SetFilterCsakKozos">
+                Közös (@VM.Koltsegek.Count(k => k.KozosE))
+            </button>
+            @foreach (var resztvevo in VM.Resztvevok)
+            {
+                <button type="button"
+                        class="fp-chip @(VM.SzuroMod == KoltsegSzuroMod.AdottSzemely && VM.SzurtResztvevoId == resztvevo.Id ? "active" : string.Empty)"
+                        @onclick="@(() => VM.SetFilterSzemely(resztvevo.Id))">
+                    @VM.GetDisplayNev(resztvevo)
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (VM.Koltsegek.Count == 0)
+    {
+        <div class="fp-empty">
+            <div class="fp-empty-badge" aria-hidden="true">💰</div>
+            <h3 class="h5 mb-2">Még nincs rögzített költségmező</h3>
+            <p class="fp-muted mb-3">
+                Hozz létre kategória alapú költségmezőket (pl. Ételek, Italok, Etetőanyag), add meg az árukat, és az app kiszámolja a teljes túra költségét és a fejenkénti részt.
+            </p>
+
+            <div class="d-flex flex-wrap justify-content-center gap-2 mb-3">
+                @foreach (var kat in KoltsegekViewModel.GyorsKezdoKategoriak)
+                {
+                    <button type="button" class="fp-chip" @onclick="@(() => VM.OpenCreateForm(kat))">
+                        + @kat
+                    </button>
+                }
+            </div>
+
+            <button type="button" class="fp-btn fp-btn-primary" @onclick="@(() => VM.OpenCreateForm())">
+                + Saját költségmező hozzáadása
+            </button>
+        </div>
+    }
+    else if (VM.SzurtKoltsegek.Count == 0)
+    {
+        <EmptyState Icon="🔍"
+                    Title="Nincs a szűrésnek megfelelő költség"
+                    Description="Próbálj meg más keresőszót vagy szűrőt választani."
+                    ActionText="Szűrők alaphelyzetbe"
+                    OnAction="VM.ResetFilters" />
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-2">
+            @foreach (var tetel in VM.SzurtKoltsegek)
+            {
+                var fizetoNev = VM.GetFizetoNev(tetel);
+
+                <div class="fp-cost-row">
+                    <div class="flex-grow-1 min-w-0">
+                        <div class="fw-bold fp-item-title">@tetel.Nev</div>
+                        @if (!string.IsNullOrWhiteSpace(tetel.Megjegyzes))
+                        {
+                            <div class="small fp-muted mt-1">@tetel.Megjegyzes</div>
+                        }
+                        <div class="d-flex flex-wrap gap-1 mt-2">
+                            <span class="fp-badge @(tetel.KozosE ? "fp-badge-primary" : "fp-badge-neutral")">
+                                @(tetel.KozosE ? "Közös költség" : $"Egyéni: {VM.GetErintettNev(tetel)}")
+                            </span>
+                            @if (tetel.KozosE && VM.AktivLetszam > 0)
+                            {
+                                <span class="fp-badge fp-badge-neutral">
+                                    @VM.FormatOsszeg(tetel.Osszeg / VM.AktivLetszam) / fő
+                                </span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(fizetoNev))
+                            {
+                                <span class="fp-badge fp-badge-success">Fizette: @fizetoNev</span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
+                        <div class="fp-cost-amount">@VM.FormatOsszeg(tetel.Osszeg)</div>
+                        <div class="d-flex gap-1">
+                            <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="@(() => VM.OpenEditForm(tetel))" aria-label="Szerkesztés" title="Szerkesztés">
+                                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                            </button>
+                            <button type="button" class="fp-btn fp-btn-icon fp-btn-danger-soft" @onclick="@(() => VM.RequestDeleteAsync(tetel))" aria-label="Törlés" title="Törlés">
+                                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@* Költségmező létrehozás / szerkesztés modal *@
+@if (VM.IsFormOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">@(VM.IsEditMode ? "Költségmező szerkesztése" : "Új költségmező")</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseForm" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <EditForm Model="VM.SzerkesztettTetel" OnValidSubmit="HandleSaveAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-2">
+                    <label class="form-label mb-1">Gyors kategória javaslatok</label>
+                    <div class="fp-chip-scroll">
+                        @foreach (var javaslat in KoltsegekViewModel.KategoriaJavaslatok)
+                        {
+                            var isSelected = string.Equals(VM.SzerkesztettTetel.Nev?.Trim(), javaslat, StringComparison.OrdinalIgnoreCase);
+                            <button type="button"
+                                    class="fp-chip @(isSelected ? "active" : string.Empty)"
+                                    @onclick="@(() => VM.ApplyKategoriaJavaslat(javaslat))">
+                                @javaslat
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="koltseg-nev">Költségmező / kategória neve</label>
+                    <InputText id="koltseg-nev" class="form-control" @bind-Value="VM.SzerkesztettTetel.Nev" placeholder="pl. Ételek, Italok, Etetőanyag, Üzemanyag" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettTetel.Nev)" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="koltseg-osszeg">Összeg (@VM.Penznem)</label>
+                    <InputNumber id="koltseg-osszeg" class="form-control" step="any" min="0" @bind-Value="VM.SzerkesztettTetel.Osszeg" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettTetel.Osszeg)" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label d-block">Költség típusa</label>
+                    <div class="fp-segmented">
+                        <button type="button"
+                                class="fp-segmented-btn @(VM.SzerkesztettTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnKozosChanged(true))">
+                            Közös (mindenki közt osztva)
+                        </button>
+                        <button type="button"
+                                class="fp-segmented-btn @(!VM.SzerkesztettTetel.KozosE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.OnKozosChanged(false))">
+                            Egyéni költség
+                        </button>
+                    </div>
+                </div>
+
+                @if (!VM.SzerkesztettTetel.KozosE)
+                {
+                    <div class="mb-3">
+                        <label class="form-label" for="koltseg-resztvevo">Kihez tartozik a költség?</label>
+                        <select id="koltseg-resztvevo" class="form-select" @bind="VM.SelectedResztvevoIdString">
+                            <option value="">-- Válassz résztvevőt --</option>
+                            @foreach (var r in VM.Resztvevok)
+                            {
+                                <option value="@r.Id.ToString("D")">@VM.GetDisplayNev(r) (@r.Szerepkor)</option>
+                            }
+                        </select>
+                        <ValidationMessage For="@(() => VM.SzerkesztettTetel.ResztvevoId)" />
+                    </div>
+                }
+
+                <div class="mb-3">
+                    <label class="form-label" for="koltseg-fizeto">Ki fizette? (opcionális, elszámoláshoz)</label>
+                    <select id="koltseg-fizeto" class="form-select" @bind="VM.SelectedFizetoIdString">
+                        <option value="">-- Nincs megadva --</option>
+                        @foreach (var r in VM.Resztvevok)
+                        {
+                            <option value="@r.Id.ToString("D")">@VM.GetDisplayNev(r)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="koltseg-megjegyzes">Megjegyzés (opcionális)</label>
+                    <InputText id="koltseg-megjegyzes" class="form-control" @bind-Value="VM.SzerkesztettTetel.Megjegyzes" placeholder="pl. Reggeli, ebéd és bogrács alapanyagok 3 napra" />
+                    <ValidationMessage For="@(() => VM.SzerkesztettTetel.Megjegyzes)" />
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseForm" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : "Mentés")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<ConfirmDialog IsVisible="@(VM.TorlesreVaroTetel is not null)"
+               IsBusy="@VM.IsBusy"
+               Title="Költségmező törlése"
+               Message="@($"Biztosan törlöd a(z) „{VM.TorlesreVaroTetel?.Nev}” ({(VM.TorlesreVaroTetel is not null ? VM.FormatOsszeg(VM.TorlesreVaroTetel.Osszeg) : string.Empty)}) költségmezőt?")"
+               ConfirmText="Törlés"
+               OnConfirm="@(() => VM.ConfirmDeleteAsync())"
+               OnCancel="VM.CancelDelete" />
+
+@code {
+    [Parameter] public Guid? TuraId { get; set; }
+    private IDisposable? _refreshRegistration;
+    private IDisposable? _backRegistration;
+
+    protected override void OnInitialized()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+        _backRegistration = BackNavigation.RegisterOverlayHandler(TryCloseOverlay);
+    }
+
+    private bool TryCloseOverlay()
+    {
+        if (VM.TorlesreVaroTetel is not null)
+        {
+            _ = InvokeAsync(VM.CancelDelete);
+            return true;
+        }
+
+        if (VM.IsFormOpen)
+        {
+            _ = InvokeAsync(VM.CloseForm);
+            return true;
+        }
+
+        return false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await VM.LoadAsync(TuraId);
+    }
+
+    private async Task OnTuraSelectedAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var selectedId))
+        {
+            await VM.ChangeTuraAsync(selectedId);
+        }
+    }
+
+    private Task HandleSaveAsync() => VM.SaveTetelAsync();
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _backRegistration?.Dispose();
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

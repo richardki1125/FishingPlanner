@@ -1,0 +1,445 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ISettingsService SettingsService
+@inject IAuthService AuthService
+@inject ISyncStatusService SyncStatus
+@inject ILiveRefreshService LiveRefresh
+@inject IBackNavigationService BackNavigation
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@if (!AuthService.IsInitialized)
+{
+    <div class="fp-auth-screen justify-content-center">
+        <LoadingSpinner Message="Munkamenet ellenőrzése..." />
+    </div>
+}
+else if (!AuthService.IsAuthenticated)
+{
+    <div class="fp-auth-screen">
+        <div class="fp-auth-topbar">
+            <button type="button"
+                    class="fp-btn fp-btn-sm fp-btn-outline"
+                    @onclick="ToggleThemeAsync"
+                    title="Világos / Sötét téma váltása">
+                @if (_isDarkMode)
+                {
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                    <span>Világos</span>
+                }
+                else
+                {
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                    <span>Sötét</span>
+                }
+            </button>
+        </div>
+
+        <FishingPlanner.Components.Pages.Bejelentkezes />
+    </div>
+}
+else
+{
+    <div class="fp-shell">
+        <aside class="fp-sidebar" aria-label="Fő navigáció">
+            <NavMenu />
+        </aside>
+
+        <div class="fp-main">
+            <header class="fp-topbar">
+                <a class="fp-topbar-brand" href="">
+                    <span class="fp-topbar-logo" aria-hidden="true">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/><path d="M18 12v.5"/><path d="M16 17.93a9.77 9.77 0 0 1 0-11.86"/><path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/></svg>
+                    </span>
+                    <span class="fp-topbar-title-text">FishingPlanner</span>
+                </a>
+
+                <div class="fp-topbar-actions">
+                    <a class="fp-user-pill" href="profil" title="@AuthService.CurrentUser?.MegjelenitesiNev">
+                        @if (!string.IsNullOrWhiteSpace(AuthService.CurrentUser?.ProfilkepUrl))
+                        {
+                            <img src="@AuthService.CurrentUser.ProfilkepUrl" alt="" class="fp-topbar-avatar" />
+                        }
+                        else
+                        {
+                            <span class="fp-user-dot" aria-hidden="true"></span>
+                        }
+                        <span>@AuthService.CurrentUser?.MegjelenitesiNev</span>
+                    </a>
+
+                    <button type="button"
+                            class="fp-btn fp-btn-icon fp-btn-outline fp-desktop-refresh-btn @(LiveRefresh.IsRefreshing ? "is-spinning" : string.Empty)"
+                            @onclick="ManualRefreshAsync"
+                            disabled="@LiveRefresh.IsRefreshing"
+                            aria-label="Adatok frissítése"
+                            title="Adatok frissítése most">
+                        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                    </button>
+
+                    <button type="button"
+                            class="fp-btn fp-btn-icon fp-btn-outline"
+                            @onclick="ToggleThemeAsync"
+                            aria-label="Téma váltása"
+                            title="Világos / Sötét téma váltása">
+                        @if (_isDarkMode)
+                        {
+                            <svg class="fp-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                        }
+                        else
+                        {
+                            <svg class="fp-icon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                        }
+                    </button>
+
+                    <button type="button"
+                            class="fp-btn fp-btn-icon fp-btn-danger-soft"
+                            @onclick="SignOutAsync"
+                            aria-label="Kijelentkezés"
+                            title="Kijelentkezés">
+                        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    </button>
+                </div>
+            </header>
+
+            @* Facebook-stílusú lehúzható (Pull-to-Refresh) lebegő frissítő gomb *@
+            <div id="fp-ptr-indicator"
+                 class="fp-ptr-indicator"
+                 role="status"
+                 aria-hidden="true">
+                <svg class="fp-ptr-icon" viewBox="0 0 24 24">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                    <path d="M16 16h5v5" />
+                </svg>
+            </div>
+
+            <main class="fp-content">
+                <div class="fp-content-inner">
+                    @if (SyncStatus.IsOffline || SyncStatus.PendingSyncCount > 0)
+                    {
+                        <div class="fp-alert fp-alert-warning mb-3" role="status">
+                            <div class="small">
+                                <strong>@(SyncStatus.IsOffline ? "Offline mód" : "Szinkronizálásra vár"):</strong>
+                                @if (SyncStatus.PendingSyncCount > 0)
+                                {
+                                    <span>@SyncStatus.PendingSyncCount helyben mentett módosítás vár feltöltésre.</span>
+                                }
+                                else
+                                {
+                                    <span>A készüléken tárolt helyi mentés látható.</span>
+                                }
+                            </div>
+                            <button type="button"
+                                    class="fp-btn fp-btn-sm fp-btn-outline flex-shrink-0"
+                                    disabled="@_isSyncing"
+                                    @onclick="SyncNowAsync">
+                                @(_isSyncing ? "Szinkron..." : "Szinkronizálás")
+                            </button>
+                        </div>
+                    }
+
+                    @Body
+                </div>
+            </main>
+        </div>
+
+        @* Mobil alsó navigációs sáv (csak 768px alatt látszik) *@
+        <nav class="fp-bottom-nav" aria-label="Mobil navigáció">
+            <NavLink class="fp-bottom-link" href="" Match="NavLinkMatch.All">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/></svg>
+                </span>
+                <span>Túrák</span>
+            </NavLink>
+
+            <NavLink class="fp-bottom-link" href="csomaglista">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M4 10a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M8 21v-5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v5"/><path d="M8 10h8"/></svg>
+                </span>
+                <span>Csomag</span>
+            </NavLink>
+
+            <NavLink class="fp-bottom-link" href="koltsegek">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+                </span>
+                <span>Költség</span>
+            </NavLink>
+
+            <NavLink class="fp-bottom-link" href="fogasok">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/><path d="M18 12v.5"/><path d="M16 17.93a9.77 9.77 0 0 1 0-11.86"/><path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/></svg>
+                </span>
+                <span>Fogások</span>
+            </NavLink>
+
+            <NavLink class="fp-bottom-link" href="statisztika">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                </span>
+                <span>Stat</span>
+            </NavLink>
+
+            <NavLink class="fp-bottom-link" href="profil">
+                <span class="fp-bottom-icon">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </span>
+                <span>Profil</span>
+            </NavLink>
+        </nav>
+    </div>
+}
+
+@code {
+    private bool _isDarkMode;
+    private bool _themeInitialized;
+    private bool _ptrInitialized;
+    private bool _isSyncing;
+    private DotNetObjectReference<MainLayout>? _dotNetRef;
+    private IDisposable? _backRegistration;
+
+    private readonly object _historyLock = new();
+    private readonly Stack<string> _navigationHistory = new();
+    private string _currentRoute = "/";
+    private bool _isNavigatingBack;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isDarkMode = await SettingsService.GetIsDarkModeAsync();
+        SettingsService.ThemeChanged += OnThemeChanged;
+        AuthService.AuthStateChanged += OnAuthStateChanged;
+        SyncStatus.SyncStatusChanged += OnSyncStatusChanged;
+        LiveRefresh.RefreshStateChanged += OnRefreshStateChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+
+        _currentRoute = NormalizeRoute(Navigation.ToBaseRelativePath(Navigation.Uri));
+        _backRegistration = BackNavigation.RegisterNavigationHandler(TryHandleBackNavigation);
+
+        await AuthService.InitializeAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_themeInitialized)
+        {
+            _themeInitialized = true;
+            await ApplyThemeAsync(_isDarkMode);
+        }
+
+        if (AuthService.IsAuthenticated && !_ptrInitialized)
+        {
+            _ptrInitialized = true;
+            _dotNetRef ??= DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("fishingPullToRefresh.init", _dotNetRef, "fp-ptr-indicator");
+            }
+            catch
+            {
+                _ptrInitialized = false;
+            }
+        }
+        else if (!AuthService.IsAuthenticated && _ptrInitialized)
+        {
+            _ptrInitialized = false;
+            try
+            {
+                await JS.InvokeVoidAsync("fishingPullToRefresh.dispose");
+            }
+            catch
+            {
+                // WebView megszakítás esetén ne omoljon össze
+            }
+        }
+    }
+
+    [JSInvokable]
+    public Task OnPullToRefreshAsync() => LiveRefresh.TriggerManualRefreshAsync();
+
+    [JSInvokable]
+    public void OnVisibilityChanged(bool isVisible) => LiveRefresh.SetAppVisibility(isVisible);
+
+    private Task ManualRefreshAsync() => LiveRefresh.TriggerManualRefreshAsync();
+
+    private async Task ToggleThemeAsync()
+    {
+        try
+        {
+            await SettingsService.SetIsDarkModeAsync(!_isDarkMode);
+        }
+        catch
+        {
+            // A hibát a SettingsService naplózza
+        }
+    }
+
+    private async Task SignOutAsync()
+    {
+        await AuthService.SignOutAsync();
+        Navigation.NavigateTo("/");
+    }
+
+    private void OnThemeChanged(bool isDark)
+    {
+        _isDarkMode = isDark;
+        _ = InvokeAsync(async () =>
+        {
+            await ApplyThemeAsync(isDark);
+            StateHasChanged();
+        });
+    }
+
+    private async Task SyncNowAsync()
+    {
+        if (_isSyncing)
+        {
+            return;
+        }
+
+        _isSyncing = true;
+        StateHasChanged();
+        try
+        {
+            await SyncStatus.SyncNowAsync();
+        }
+        finally
+        {
+            _isSyncing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnSyncStatusChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnRefreshStateChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnAuthStateChanged(UserSession? session)
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ApplyThemeAsync(bool isDark)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("fishingTheme.setTheme", isDark ? "dark" : "light");
+        }
+        catch
+        {
+            // WebView újratöltés vagy megszakítás esetén ne omoljon össze a layout
+        }
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        var nextRoute = NormalizeRoute(Navigation.ToBaseRelativePath(e.Location));
+        lock (_historyLock)
+        {
+            if (_isNavigatingBack)
+            {
+                _isNavigatingBack = false;
+                _currentRoute = nextRoute;
+                return;
+            }
+
+            if (!string.Equals(nextRoute, _currentRoute, StringComparison.OrdinalIgnoreCase))
+            {
+                if (IsHomeRoute(nextRoute))
+                {
+                    _navigationHistory.Clear();
+                }
+                else
+                {
+                    _navigationHistory.Push(_currentRoute);
+                }
+
+                _currentRoute = nextRoute;
+            }
+        }
+    }
+
+    private bool TryHandleBackNavigation()
+    {
+        if (!AuthService.IsAuthenticated)
+        {
+            return false;
+        }
+
+        string? targetRoute = null;
+
+        lock (_historyLock)
+        {
+            while (_navigationHistory.Count > 0)
+            {
+                var prev = _navigationHistory.Pop();
+                if (!string.Equals(prev, _currentRoute, StringComparison.OrdinalIgnoreCase))
+                {
+                    targetRoute = prev;
+                    break;
+                }
+            }
+
+            if (targetRoute is null && !IsHomeRoute(_currentRoute))
+            {
+                targetRoute = "/";
+            }
+
+            if (targetRoute is null)
+            {
+                return false;
+            }
+
+            _isNavigatingBack = true;
+        }
+
+        _ = InvokeAsync(() => Navigation.NavigateTo(targetRoute, replace: true));
+        return true;
+    }
+
+    private static string NormalizeRoute(string? relativePath)
+    {
+        var cleaned = (relativePath ?? string.Empty).Trim().TrimStart('/');
+        if (string.IsNullOrEmpty(cleaned) ||
+            string.Equals(cleaned, "turak", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/";
+        }
+
+        return "/" + cleaned;
+    }
+
+    private static bool IsHomeRoute(string route) =>
+        string.Equals(route, "/", StringComparison.OrdinalIgnoreCase);
+
+    public void Dispose()
+    {
+        _backRegistration?.Dispose();
+        Navigation.LocationChanged -= OnLocationChanged;
+        SettingsService.ThemeChanged -= OnThemeChanged;
+        AuthService.AuthStateChanged -= OnAuthStateChanged;
+        SyncStatus.SyncStatusChanged -= OnSyncStatusChanged;
+        LiveRefresh.RefreshStateChanged -= OnRefreshStateChanged;
+
+        if (_ptrInitialized)
+        {
+            _ptrInitialized = false;
+            try
+            {
+                _ = JS.InvokeVoidAsync("fishingPullToRefresh.dispose");
+            }
+            catch
+            {
+                // Ignorálható felszabadításkor
+            }
+        }
+
+        _dotNetRef?.Dispose();
+    }
+}

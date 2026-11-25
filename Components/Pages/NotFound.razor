@@ -1,0 +1,8 @@
+@page "/not-found"
+@inject NavigationManager Navigation
+
+<EmptyState Icon="🗺️"
+            Title="Az oldal nem található"
+            Description="A keresett horgásztúra oldal nem létezik vagy áthelyezésre került."
+            ActionText="Vissza a túrákhoz"
+            OnAction="@(() => Navigation.NavigateTo("/"))" />

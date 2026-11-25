@@ -1,0 +1,19 @@
+<div class="fp-empty">
+    <div class="fp-empty-badge" aria-hidden="true">@Icon</div>
+    <h5 class="mb-2">@Title</h5>
+    <p class="fp-muted mb-3 mx-auto" style="max-width: 360px;">@Description</p>
+    @if (!string.IsNullOrWhiteSpace(ActionText) && OnAction.HasDelegate)
+    {
+        <button type="button" class="fp-btn fp-btn-primary" @onclick="OnAction">
+            @ActionText
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public string Icon { get; set; } = "🎣";
+    [Parameter] public string Title { get; set; } = "Nincs megjeleníthető elem";
+    [Parameter] public string Description { get; set; } = string.Empty;
+    [Parameter] public string? ActionText { get; set; }
+    [Parameter] public EventCallback OnAction { get; set; }
+}

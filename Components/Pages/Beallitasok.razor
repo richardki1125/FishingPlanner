@@ -1,0 +1,126 @@
+@page "/beallitasok"
+@implements IDisposable
+@inject BeallitasokViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">Beállítások</h1>
+        <p class="fp-subtitle">Offline szinkronizálás, biztonsági mentés és adminisztrátori adatkezelés.</p>
+    </div>
+</div>
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@if (!VM.IsAdmin)
+{
+    <EmptyState Icon="🔒"
+                Title="Csak adminisztrátor számára elérhető"
+                Description="Ez az oldal csak a tulajdonosi fiókkal tekinthető meg."
+                ActionText="Vissza a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else
+{
+    var initial = !string.IsNullOrWhiteSpace(VM.CurrentUserName) ? VM.CurrentUserName[..1] : "H";
+
+    <div class="d-flex flex-column gap-3" style="max-width: 680px;">
+        @* Fiók kártya *@
+        <div class="fp-card">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="fp-avatar-circle" aria-hidden="true">@initial</div>
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fp-kpi-label">Bejelentkezett horgász</span>
+                            <span class="fp-badge fp-badge-primary">Admin</span>
+                        </div>
+                        <div class="h5 mb-0">@VM.CurrentUserName</div>
+                    </div>
+                </div>
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-danger-soft" @onclick="VM.SignOutAsync" disabled="@VM.IsBusy">
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    <span>Kijelentkezés</span>
+                </button>
+            </div>
+        </div>
+
+        @* Offline tükör, szinkronizálás és JSON biztonsági mentés *@
+        <div class="fp-card">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                <h2 class="h6 text-uppercase fp-muted mb-0" style="letter-spacing: 0.06em;">Adatbiztonság &amp; Offline mentés</h2>
+                @if (VM.IsOffline)
+                {
+                    <span class="fp-badge fp-badge-warning">Offline mód</span>
+                }
+                else
+                {
+                    <span class="fp-badge fp-badge-success">Felhő csatlakoztatva</span>
+                }
+            </div>
+
+            <p class="small fp-muted mb-3">
+                Minden túra, csomaglista és fogás automatikusan elmentődik erre az eszközre is. Ha elmegy a net vagy gond van a felhővel,
+                az adatok megmaradnak, és később visszatölthetők egy új adatbázisba is.
+            </p>
+
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <span class="fp-badge fp-badge-neutral">Utolsó szinkron: @VM.LastSyncedText</span>
+                @if (VM.PendingSyncCount > 0)
+                {
+                    <span class="fp-badge fp-badge-warning">Függőben lévő módosítás: @VM.PendingSyncCount db</span>
+                }
+            </div>
+
+            <div class="row g-2">
+                <div class="col-12 col-sm-6">
+                    <button type="button" class="fp-btn fp-btn-sm fp-btn-primary w-100" @onclick="VM.SyncNowAsync" disabled="@VM.IsBusy">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        <span>Szinkronizálás most</span>
+                    </button>
+                </div>
+                <div class="col-12 col-sm-6">
+                    <button type="button" class="fp-btn fp-btn-sm fp-btn-outline w-100" @onclick="VM.PushAllLocalToCloudAsync" disabled="@VM.IsBusy" title="Akkor hasznos, ha új vagy kiürített felhős adatbázisba szeretnéd visszatölteni a telefonon lévő adatokat">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                        <span>Helyi adatok → Felhő</span>
+                    </button>
+                </div>
+                <div class="col-12 col-sm-6">
+                    <button type="button" class="fp-btn fp-btn-sm fp-btn-outline w-100" @onclick="VM.ExportBackupAsync" disabled="@VM.IsBusy">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        <span>Mentés exportálása (.json)</span>
+                    </button>
+                </div>
+                <div class="col-12 col-sm-6">
+                    <button type="button" class="fp-btn fp-btn-sm fp-btn-outline w-100" @onclick="VM.ImportBackupAsync" disabled="@VM.IsBusy">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="m15 15-3-3-3 3"/></svg>
+                        <span>Mentés visszaállítása (.json)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IDisposable? _refreshRegistration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+        await VM.LoadAsync();
+    }
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="hu" data-theme="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#141A1C" />
+    <title>FishingPlanner – Horgásztúra Tervező</title>
+    <base href="/" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="FishingPlanner.styles.css" />
+    <link rel="icon" href="data:,">
+</head>
+
+<body>
+
+    <div class="status-bar-safe-area"></div>
+
+    <div id="app">
+        <div class="app-boot-splash">
+            <div class="fp-spinner" role="status" aria-label="Betöltés"></div>
+            <p class="mt-3 mb-0 fw-semibold">FishingPlanner betöltése...</p>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" data-nosnippet>
+        Váratlan alkalmazáshiba történt.
+        <a href="." class="reload">Újratöltés</a>
+        <span class="dismiss">✕</span>
+    </div>
+
+    <script>
+        window.fishingTheme = {
+            setTheme: function (theme) {
+                var isDark = theme === 'dark';
+                document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+                var meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) {
+                    meta.setAttribute('content', isDark ? '#141A1C' : '#F4F6F4');
+                }
+            }
+        };
+
+        window.fishingPullToRefresh = (function () {
+            var state = {
+                initialized: false,
+                dotNetRef: null,
+                indicatorId: null,
+                tracking: false,
+                pulling: false,
+                refreshing: false,
+                startX: 0,
+                startY: 0,
+                pullDistance: 0,
+                threshold: 62
+            };
+
+            function getIndicator() {
+                return state.indicatorId ? document.getElementById(state.indicatorId) : null;
+            }
+
+            function getScrollTop() {
+                var se = document.scrollingElement;
+                return (se ? se.scrollTop : 0) || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+            }
+
+            function hasScrolledAncestor(target) {
+                var node = target;
+                while (node && node !== document.body && node !== document.documentElement) {
+                    if (node.scrollTop && node.scrollTop > 0) {
+                        return true;
+                    }
+                    node = node.parentElement;
+                }
+                return false;
+            }
+
+            function isBlockedTarget(target) {
+                if (!target || !target.closest) return false;
+                if (target.closest('.fp-modal-backdrop')) return true;
+                if (target.closest('.fp-lightbox')) return true;
+                if (target.closest('.fp-chip-scroll')) return true;
+                if (hasScrolledAncestor(target)) return true;
+                var tag = target.tagName;
+                return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION';
+            }
+
+            function resetIndicator() {
+                var el = getIndicator();
+                if (!el) return;
+                el.classList.remove('is-dragging', 'is-ready', 'is-refreshing');
+                el.style.transform = 'translate3d(-50%, -60px, 0) scale(0.65)';
+                el.style.opacity = '0';
+                var icon = el.querySelector('.fp-ptr-icon');
+                if (icon) {
+                    icon.style.transform = 'rotate(0deg)';
+                }
+            }
+
+            function onTouchStart(e) {
+                if (state.refreshing || e.touches.length !== 1) return;
+                if (getScrollTop() > 1) return;
+                if (isBlockedTarget(e.target)) return;
+
+                var t = e.touches[0];
+                state.tracking = true;
+                state.pulling = false;
+                state.startX = t.clientX;
+                state.startY = t.clientY;
+                state.pullDistance = 0;
+            }
+
+            function onTouchMove(e) {
+                if (!state.tracking || state.refreshing || e.touches.length !== 1) return;
+
+                var t = e.touches[0];
+                var dx = t.clientX - state.startX;
+                var dy = t.clientY - state.startY;
+
+                if (getScrollTop() > 1) {
+                    state.tracking = false;
+                    if (state.pulling) {
+                        state.pulling = false;
+                        state.pullDistance = 0;
+                        resetIndicator();
+                    }
+                    return;
+                }
+
+                if (!state.pulling) {
+                    if (dy <= 10 || Math.abs(dx) > Math.abs(dy)) {
+                        if (dy < -4 || Math.abs(dx) > 10) {
+                            state.tracking = false;
+                        }
+                        return;
+                    }
+                    state.pulling = true;
+                }
+
+                if (dy <= 0) {
+                    state.pullDistance = 0;
+                    resetIndicator();
+                    return;
+                }
+
+                var pull = Math.min(108, (dy - 10) * 0.52);
+                state.pullDistance = pull;
+
+                var el = getIndicator();
+                if (!el) return;
+
+                var progress = Math.min(1, pull / state.threshold);
+                var y = pull - 46;
+                var scale = 0.65 + 0.35 * progress;
+
+                el.classList.add('is-dragging');
+                el.classList.toggle('is-ready', pull >= state.threshold);
+                el.style.transform = 'translate3d(-50%, ' + y.toFixed(1) + 'px, 0) scale(' + scale.toFixed(3) + ')';
+                el.style.opacity = Math.min(1, progress * 1.4).toFixed(2);
+
+                var icon = el.querySelector('.fp-ptr-icon');
+                if (icon) {
+                    icon.style.transform = 'rotate(' + Math.round(progress * 270) + 'deg)';
+                }
+            }
+
+            function finishTouch() {
+                if (!state.tracking) return;
+                var shouldRefresh = state.pulling && state.pullDistance >= state.threshold;
+                state.tracking = false;
+                state.pulling = false;
+                state.pullDistance = 0;
+
+                if (!shouldRefresh) {
+                    resetIndicator();
+                    return;
+                }
+
+                var el = getIndicator();
+                state.refreshing = true;
+
+                if (el) {
+                    el.classList.remove('is-dragging');
+                    el.classList.add('is-ready', 'is-refreshing');
+                    el.style.transform = 'translate3d(-50%, 16px, 0) scale(1)';
+                    el.style.opacity = '1';
+                    var icon = el.querySelector('.fp-ptr-icon');
+                    if (icon) {
+                        icon.style.transform = '';
+                    }
+                }
+
+                if (state.dotNetRef) {
+                    state.dotNetRef.invokeMethodAsync('OnPullToRefreshAsync')
+                        .catch(function () { })
+                        .finally(function () {
+                            state.refreshing = false;
+                            resetIndicator();
+                        });
+                } else {
+                    state.refreshing = false;
+                    resetIndicator();
+                }
+            }
+
+            function onVisibilityChange() {
+                if (state.dotNetRef) {
+                    state.dotNetRef.invokeMethodAsync('OnVisibilityChanged', !document.hidden)
+                        .catch(function () { });
+                }
+            }
+
+            return {
+                init: function (dotNetRef, indicatorId) {
+                    state.dotNetRef = dotNetRef;
+                    state.indicatorId = indicatorId;
+                    if (!state.initialized) {
+                        window.addEventListener('touchstart', onTouchStart, { passive: true });
+                        window.addEventListener('touchmove', onTouchMove, { passive: true });
+                        window.addEventListener('touchend', finishTouch, { passive: true });
+                        window.addEventListener('touchcancel', finishTouch, { passive: true });
+                        document.addEventListener('visibilitychange', onVisibilityChange);
+                        state.initialized = true;
+                    }
+                    resetIndicator();
+                },
+                dispose: function () {
+                    if (state.initialized) {
+                        window.removeEventListener('touchstart', onTouchStart);
+                        window.removeEventListener('touchmove', onTouchMove);
+                        window.removeEventListener('touchend', finishTouch);
+                        window.removeEventListener('touchcancel', finishTouch);
+                        document.removeEventListener('visibilitychange', onVisibilityChange);
+                        state.initialized = false;
+                    }
+                    state.dotNetRef = null;
+                    state.indicatorId = null;
+                    state.tracking = false;
+                    state.pulling = false;
+                    state.refreshing = false;
+                }
+            };
+        })();
+    </script>
+    <script src="_framework/blazor.webview.js" autostart="false"></script>
+
+</body>
+
+</html>

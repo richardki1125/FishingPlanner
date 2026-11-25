@@ -1,0 +1,107 @@
+@page "/bejelentkezes"
+@implements IDisposable
+@inject AuthViewModel VM
+
+<div class="fp-auth-wrapper">
+    <div class="fp-card fp-auth-card">
+        <div class="text-center mb-4">
+            <div class="fp-brand-emblem" aria-hidden="true">
+                <svg class="fp-icon" style="width: 28px; height: 28px;" viewBox="0 0 24 24">
+                    <path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z" />
+                    <path d="M18 12v.5" />
+                    <path d="M16 17.93a9.77 9.77 0 0 1 0-11.86" />
+                    <path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33" />
+                </svg>
+            </div>
+            <h1 class="h4 mb-1">FishingPlanner</h1>
+            <p class="fp-subtitle mb-0">Közös horgásztúra tervező &amp; fogási napló</p>
+        </div>
+
+        <AlertBanner ErrorMessage="@VM.ErrorMessage"
+                     SuccessMessage="@VM.SuccessMessage"
+                     OnDismiss="@VM.ClearMessages" />
+
+        <div class="fp-segmented mb-4" role="tablist" aria-label="Bejelentkezés vagy regisztráció">
+            <button type="button"
+                    role="tab"
+                    aria-selected="@(!VM.IsRegisterMode)"
+                    class="fp-segmented-btn @(!VM.IsRegisterMode ? "active" : string.Empty)"
+                    @onclick="@(() => VM.ToggleAuthMode(false))">
+                Bejelentkezés
+            </button>
+            <button type="button"
+                    role="tab"
+                    aria-selected="@VM.IsRegisterMode"
+                    class="fp-segmented-btn @(VM.IsRegisterMode ? "active" : string.Empty)"
+                    @onclick="@(() => VM.ToggleAuthMode(true))">
+                Regisztráció
+            </button>
+        </div>
+
+        @if (!VM.IsRegisterMode)
+        {
+            <EditForm Model="VM.LoginForm" OnValidSubmit="HandleLoginAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="login-username">Felhasználónév</label>
+                    <InputText id="login-username" class="form-control" @bind-Value="VM.LoginForm.Felhasznalonev" placeholder="pl. bence" autocomplete="username" />
+                    <ValidationMessage For="@(() => VM.LoginForm.Felhasznalonev)" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="login-password">Jelszó</label>
+                    <InputText id="login-password" type="password" class="form-control" @bind-Value="VM.LoginForm.Password" placeholder="••••••" autocomplete="current-password" />
+                    <ValidationMessage For="@(() => VM.LoginForm.Password)" />
+                </div>
+
+                <button type="submit" class="fp-btn fp-btn-primary w-100" disabled="@VM.IsBusy">
+                    @(VM.IsBusy ? "Bejelentkezés..." : "Belépés a csapatba")
+                </button>
+            </EditForm>
+        }
+        else
+        {
+            <EditForm Model="VM.RegisterForm" OnValidSubmit="HandleRegisterAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="reg-username">Felhasználónév</label>
+                    <InputText id="reg-username" class="form-control" @bind-Value="VM.RegisterForm.Felhasznalonev" placeholder="pl. bence vagy dani_99" autocomplete="username" />
+                    <div class="form-text fp-muted">3–30 karakter (betűk, számok, ., _, -).</div>
+                    <ValidationMessage For="@(() => VM.RegisterForm.Felhasznalonev)" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="reg-password">Jelszó (min. 6 karakter)</label>
+                    <InputText id="reg-password" type="password" class="form-control" @bind-Value="VM.RegisterForm.Password" placeholder="••••••" autocomplete="new-password" />
+                    <ValidationMessage For="@(() => VM.RegisterForm.Password)" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label" for="reg-password-confirm">Jelszó megerősítése</label>
+                    <InputText id="reg-password-confirm" type="password" class="form-control" @bind-Value="VM.RegisterForm.PasswordConfirm" placeholder="••••••" autocomplete="new-password" />
+                    <ValidationMessage For="@(() => VM.RegisterForm.PasswordConfirm)" />
+                </div>
+
+                <button type="submit" class="fp-btn fp-btn-primary w-100" disabled="@VM.IsBusy">
+                    @(VM.IsBusy ? "Fiók létrehozása..." : "Fiók létrehozása")
+                </button>
+            </EditForm>
+        }
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        VM.StateChanged += OnStateChanged;
+    }
+
+    private Task HandleLoginAsync() => VM.LoginAsync();
+    private Task HandleRegisterAsync() => VM.RegisterAsync();
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => VM.StateChanged -= OnStateChanged;
+}

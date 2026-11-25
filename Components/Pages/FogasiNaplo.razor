@@ -1,0 +1,640 @@
+@page "/fogasok"
+@page "/fogasok/{TuraId:guid}"
+@implements IDisposable
+@inject FogasiNaploViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject IBackNavigationService BackNavigation
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">Fogási napló</h1>
+        <p class="fp-subtitle">Kifogott halak rögzítése súllyal vagy darabszámmal, csalival és fotóval.</p>
+    </div>
+
+    @if (VM.Turak.Count > 0)
+    {
+        <div class="fp-header-controls">
+            <select class="form-select" value="@VM.AktualisTura?.Id" @onchange="OnTuraSelectedAsync" aria-label="Túra kiválasztása">
+                @foreach (var tura in VM.Turak)
+                {
+                    <option value="@tura.Id">@tura.Nev</option>
+                }
+            </select>
+            <button type="button" class="fp-btn fp-btn-primary" @onclick="VM.OpenCreateForm" disabled="@(VM.AktualisTura is null || VM.Resztvevok.Count == 0 || VM.IsBusy)">
+                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                <span>Új fogás</span>
+            </button>
+        </div>
+    }
+</div>
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@if (VM.IsLoading)
+{
+    <LoadingSpinner Message="Fogási napló betöltése..." />
+}
+else if (VM.AktualisTura is null)
+{
+    <EmptyState Icon="🐟"
+                Title="Nincs kiválasztott túra"
+                Description="Először hozz létre egy horgásztúrát a fogások rögzítéséhez."
+                ActionText="Ugrás a túrákhoz"
+                OnAction="@(() => Navigation.NavigateTo("/"))" />
+}
+else
+{
+    @if (VM.Resztvevok.Count == 0)
+    {
+        <div class="fp-alert fp-alert-warning">
+            <span>Ehhez a túrához még nincs résztvevő felvéve. Adj hozzá legalább egy horgászt a Túrák oldalon, hogy fogást tudj rögzíteni!</span>
+        </div>
+    }
+
+    <div class="fp-kpi-grid mb-3">
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Összes fogott hal</div>
+            <div class="fp-kpi-value">@VM.OsszesHalDb db</div>
+        </div>
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Mért összsúly</div>
+            <div class="fp-kpi-value">@VM.OsszesFogottSulyKg.ToString("0.##") kg</div>
+        </div>
+        <div class="fp-kpi-card">
+            <div class="fp-kpi-label">Legnagyobb hal</div>
+            <div class="fp-kpi-value">@(VM.LegnagyobbSulyKg > 0 ? $"{VM.LegnagyobbSulyKg:0.##} kg" : "–")</div>
+        </div>
+    </div>
+
+    <div class="fp-card mb-3">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-12 col-md-5">
+                <input type="search"
+                       class="form-control"
+                       placeholder="Keresés halfaj, csali, horgász vagy megjegyzés alapján..."
+                       @bind="VM.KeresesiKifejezes"
+                       @bind:event="oninput" />
+            </div>
+            <div class="col-8 col-md-5">
+                <select class="form-select"
+                        value="@VM.RendezesMod.ToString()"
+                        @onchange="OnRendezesSelected"
+                        aria-label="Fogások rendezése">
+                    <option value="@nameof(FogasRendezesMod.DatumCsokkeno)">Legújabb elöl (Dátum csökkenő)</option>
+                    <option value="@nameof(FogasRendezesMod.LegnagyobbElol)">Legnagyobb elöl (Súly csökkenő)</option>
+                    <option value="@nameof(FogasRendezesMod.DatumNovekvo)">Dátum szerint növekvő</option>
+                </select>
+            </div>
+            <div class="col-4 col-md-2 d-flex justify-content-end">
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-ghost w-100 w-md-auto" @onclick="VM.ResetFilters">
+                    Alaphelyzet
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-chip-scroll mb-2">
+            <button type="button"
+                    class="fp-chip @(VM.AllapotSzuro == FogasAllapotSzuro.Mind ? "active" : string.Empty)"
+                    @onclick="@(() => VM.SetAllapotSzuro(FogasAllapotSzuro.Mind))">
+                Mind (@VM.OsszesHalDb db)
+            </button>
+            <button type="button"
+                    class="fp-chip @(VM.AllapotSzuro == FogasAllapotSzuro.Visszaengedett ? "active" : string.Empty)"
+                    @onclick="@(() => VM.SetAllapotSzuro(FogasAllapotSzuro.Visszaengedett))">
+                Visszaengedett (@VM.VisszaengedettHalDb)
+            </button>
+            <button type="button"
+                    class="fp-chip @(VM.AllapotSzuro == FogasAllapotSzuro.Megtartott ? "active" : string.Empty)"
+                    @onclick="@(() => VM.SetAllapotSzuro(FogasAllapotSzuro.Megtartott))">
+                Megtartott (@VM.MegtartottHalDb)
+            </button>
+        </div>
+
+        <div class="fp-chip-scroll">
+            <button type="button"
+                    class="fp-chip @(VM.SzurtResztvevoId is null ? "active" : string.Empty)"
+                    @onclick="@(() => VM.SetResztvevoFilter(null))">
+                Minden horgász
+            </button>
+            @foreach (var r in VM.Resztvevok)
+            {
+                <button type="button"
+                        class="fp-chip @(VM.SzurtResztvevoId == r.Id ? "active" : string.Empty)"
+                        @onclick="@(() => VM.SetResztvevoFilter(r.Id))">
+                    @VM.GetHorgaszNev(r.Id)
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (VM.Fogasok.Count == 0)
+    {
+        <EmptyState Icon="🎣"
+                    Title="Még nincs rögzített fogás"
+                    Description="Dokumentáld az első halat súllyal és hosszal, vagy darabszámra (pl. kárász)!"
+                    ActionText="@(VM.Resztvevok.Count > 0 ? "+ Első fogás rögzítése" : null)"
+                    OnAction="VM.OpenCreateForm" />
+    }
+    else if (VM.SzurtFogasok.Count == 0)
+    {
+        <EmptyState Icon="🔍"
+                    Title="Nincs találat"
+                    Description="A megadott szűrők alapján nincs fogás a naplóban."
+                    ActionText="Szűrők alaphelyzetbe"
+                    OnAction="VM.ResetFilters" />
+    }
+    else
+    {
+        <div class="row g-3">
+            @foreach (var fogas in VM.SzurtFogasok)
+            {
+                <div class="col-12 col-md-6">
+                    <article class="fp-catch-card">
+                        @if (!string.IsNullOrWhiteSpace(fogas.KepUrl))
+                        {
+                            <button type="button"
+                                    class="fp-catch-photo-wrap fp-catch-photo-btn"
+                                    @onclick="@(() => VM.OpenPhotoViewer(fogas))"
+                                    aria-label="@($"{fogas.Halfaj} fotó megnyitása teljes képernyőn")"
+                                    title="Kép megnyitása nagyban">
+                                <img src="@fogas.KepUrl" alt="@fogas.Halfaj" />
+                                <span class="fp-catch-photo-zoom-hint" aria-hidden="true">
+                                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>
+                                </span>
+                            </button>
+                        }
+
+                        <div class="fp-catch-body">
+                            <div>
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <div>
+                                        <h3 class="h5 mb-1">@fogas.Halfaj</h3>
+                                        <div class="small fp-muted">
+                                            @VM.GetHorgaszNev(fogas.ResztvevoId) · @fogas.Idopont.ToString("yyyy.MM.dd. HH:mm")
+                                        </div>
+                                    </div>
+                                    @if (fogas.DarabAlapuE)
+                                    {
+                                        <span class="fp-badge fp-badge-primary" style="font-size: 0.92rem; padding: 0.35rem 0.75rem;">
+                                            @fogas.Mennyiseg db
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fp-badge fp-badge-success" style="font-size: 0.92rem; padding: 0.35rem 0.75rem;">
+                                            @((fogas.SulyKg ?? 0).ToString("0.##")) kg
+                                        </span>
+                                    }
+                                </div>
+
+                                <div class="d-flex flex-wrap gap-1 mb-2">
+                                    @{
+                                        var kategoriaNev = VM.GetHalKategoriaNev(fogas.Halfaj);
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(kategoriaNev))
+                                    {
+                                        <span class="fp-badge fp-badge-primary">@kategoriaNev</span>
+                                    }
+                                    @if (fogas.VisszaengedettE)
+                                    {
+                                        <span class="fp-badge fp-badge-success">Visszaengedett</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fp-badge fp-badge-warning">Megtartott</span>
+                                    }
+                                    @if (!fogas.DarabAlapuE && fogas.HosszCm.HasValue)
+                                    {
+                                        <span class="fp-badge fp-badge-neutral">@fogas.HosszCm.Value.ToString("0.#") cm</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="fp-badge fp-badge-neutral">Mennyiségi fogás</span>
+                                    }
+                                    <span class="fp-badge fp-badge-accent">@fogas.Csali</span>
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(fogas.Megjegyzes))
+                                {
+                                    <p class="small fp-muted mb-3">@fogas.Megjegyzes</p>
+                                }
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center gap-2 pt-2 border-top" style="border-color: var(--fp-border) !important;">
+                                @{
+                                    var horgaszNev = VM.GetHorgaszNev(fogas.ResztvevoId);
+                                    var horgaszAvatar = VM.GetHorgaszProfilkepUrl(fogas.ResztvevoId);
+                                    var horgaszKezdo = !string.IsNullOrWhiteSpace(horgaszNev) ? horgaszNev[..1] : "H";
+                                }
+                                <div class="fp-catch-angler-wrap min-w-0">
+                                    @if (!string.IsNullOrWhiteSpace(horgaszAvatar))
+                                    {
+                                        <img src="@horgaszAvatar" alt="@horgaszNev" class="fp-catch-angler-avatar" title="@horgaszNev" />
+                                    }
+                                    else
+                                    {
+                                        <span class="fp-catch-angler-avatar fp-catch-angler-fallback" title="@horgaszNev" aria-hidden="true">@horgaszKezdo</span>
+                                    }
+                                    <span class="fp-catch-angler-name text-truncate">@horgaszNev</span>
+                                </div>
+
+                                <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                                    @if (fogas.DarabAlapuE)
+                                    {
+                                        <button type="button" class="fp-btn fp-btn-sm fp-btn-soft" disabled="@VM.IsBusy" @onclick="@(() => VM.IncrementMennyisegAsync(fogas))">
+                                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                                            <span>1 db</span>
+                                        </button>
+                                    }
+                                    <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="@(() => VM.OpenEditForm(fogas))" aria-label="Fogás szerkesztése" title="Szerkesztés">
+                                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                                    </button>
+                                    <button type="button" class="fp-btn fp-btn-icon fp-btn-danger-soft" @onclick="@(() => VM.RequestDeleteAsync(fogas))" aria-label="Fogás törlése" title="Törlés">
+                                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+            }
+        </div>
+    }
+}
+
+@* Fogás űrlap modal *@
+@if (VM.IsFormOpen)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="fp-modal">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h3 class="h5 mb-0">@(VM.IsEditMode ? "Fogás szerkesztése" : "Új fogás rögzítése")</h3>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-ghost" @onclick="VM.CloseForm" aria-label="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+
+            <AlertBanner ErrorMessage="@VM.ErrorMessage"
+                         SuccessMessage="@VM.SuccessMessage"
+                         OnDismiss="@VM.ClearMessages" />
+
+            <EditForm Model="VM.SzerkesztettFogas" OnValidSubmit="HandleSaveAsync">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label d-block">Rögzítés módja</label>
+                    <div class="fp-segmented">
+                        <button type="button"
+                                class="fp-segmented-btn @(!VM.SzerkesztettFogas.DarabAlapuE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.SetMeresiMod(false))">
+                            Súly és hossz
+                        </button>
+                        <button type="button"
+                                class="fp-segmented-btn @(VM.SzerkesztettFogas.DarabAlapuE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.SetMeresiMod(true))">
+                            Darabszám (pl. kárász)
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label d-block">Hal sorsa</label>
+                    <div class="fp-segmented">
+                        <button type="button"
+                                class="fp-segmented-btn @(VM.SzerkesztettFogas.VisszaengedettE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.SetVisszaengedett(true))">
+                            Visszaengedett
+                        </button>
+                        <button type="button"
+                                class="fp-segmented-btn @(!VM.SzerkesztettFogas.VisszaengedettE ? "active" : string.Empty)"
+                                @onclick="@(() => VM.SetVisszaengedett(false))">
+                            Megtartott
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="fogas-horgasz">Horgász</label>
+                    <InputSelect id="fogas-horgasz" class="form-select" @bind-Value="VM.SzerkesztettFogas.ResztvevoId">
+                        <option value="@Guid.Empty">-- Válassz horgászt --</option>
+                        @foreach (var r in VM.Resztvevok)
+                        {
+                            <option value="@r.Id">@r.Nev</option>
+                        }
+                    </InputSelect>
+                    <ValidationMessage For="@(() => VM.SzerkesztettFogas.ResztvevoId)" />
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label" for="fogas-kategoria">Hal főkategória</label>
+                        <select id="fogas-kategoria"
+                                class="form-select"
+                                value="@VM.KivalasztottKategoriaId"
+                                @onchange="OnKategoriaSelected">
+                            @foreach (var csoport in VM.HalKategoriak)
+                            {
+                                <option value="@csoport.Kategoria.Id.ToString("D")">@csoport.Kategoria.Nev</option>
+                            }
+                            <option value="@FogasiNaploViewModel.EgyeniHalfajKulcs">Egyéb / Egyéni halfaj...</option>
+                        </select>
+                    </div>
+
+                    @if (!VM.EgyeniHalfajMod && VM.AktivAlkategoriak.Count > 0)
+                    {
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label" for="fogas-alkategoria">Alkategória / Fajta</label>
+                            <select id="fogas-alkategoria"
+                                    class="form-select"
+                                    value="@VM.KivalasztottAlkategoriaId"
+                                    @onchange="OnAlkategoriaSelected">
+                                @foreach (var alkat in VM.AktivAlkategoriak)
+                                {
+                                    <option value="@alkat.Id.ToString("D")">@alkat.Nev</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="col-12 col-sm-6">
+                            <label class="form-label" for="fogas-halfaj">Halfaj neve</label>
+                            <InputText id="fogas-halfaj"
+                                       class="form-control"
+                                       @bind-Value="VM.SzerkesztettFogas.Halfaj"
+                                       placeholder="@(VM.SzerkesztettFogas.DarabAlapuE ? "pl. Kárász, Bodorka" : "pl. Tükörponty, Amur")" />
+                        </div>
+                    }
+                    <div class="col-12">
+                        <ValidationMessage For="@(() => VM.SzerkesztettFogas.Halfaj)" />
+                    </div>
+                </div>
+
+                @if (VM.SzerkesztettFogas.DarabAlapuE)
+                {
+                    <div class="mb-3">
+                        <label class="form-label" for="fogas-mennyiseg">Mennyiség (db)</label>
+                        <InputNumber id="fogas-mennyiseg" class="form-control" style="max-width: 180px;" @bind-Value="VM.SzerkesztettFogas.Mennyiseg" />
+                        <ValidationMessage For="@(() => VM.SzerkesztettFogas.Mennyiseg)" />
+                    </div>
+                }
+                else
+                {
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <label class="form-label" for="fogas-suly">Súly (kg)</label>
+                            <InputNumber id="fogas-suly" class="form-control" @bind-Value="VM.SzerkesztettFogas.SulyKg" />
+                            <ValidationMessage For="@(() => VM.SzerkesztettFogas.SulyKg)" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="fogas-hossz">Hossz (cm)</label>
+                            <InputNumber id="fogas-hossz" class="form-control" @bind-Value="VM.SzerkesztettFogas.HosszCm" />
+                            <ValidationMessage For="@(() => VM.SzerkesztettFogas.HosszCm)" />
+                        </div>
+                    </div>
+                }
+
+                <div class="row g-3 mb-3">
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label" for="fogas-idopont">Időpont</label>
+                        <InputDate Type="InputDateType.DateTimeLocal" id="fogas-idopont" class="form-control" @bind-Value="VM.SzerkesztettFogas.Idopont" />
+                        <ValidationMessage For="@(() => VM.SzerkesztettFogas.Idopont)" />
+                    </div>
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label" for="fogas-csali">Csali</label>
+                        <InputText id="fogas-csali" class="form-control" @bind-Value="VM.SzerkesztettFogas.Csali" placeholder="pl. Csonti, Kukorica, Bojli" />
+                        <ValidationMessage For="@(() => VM.SzerkesztettFogas.Csali)" />
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="fogas-megjegyzes">Megjegyzés (opcionális)</label>
+                    <InputTextArea id="fogas-megjegyzes" class="form-control" rows="2" @bind-Value="VM.SzerkesztettFogas.Megjegyzes" placeholder="Körülmények, hely, visszaengedés..." />
+                    <ValidationMessage For="@(() => VM.SzerkesztettFogas.Megjegyzes)" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label d-block">Fotó csatolása</label>
+                    <div class="d-flex flex-wrap gap-2 mb-2">
+                        <button type="button" class="fp-btn fp-btn-sm fp-btn-outline" @onclick="@(() => VM.PickPhotoAsync())" disabled="@VM.IsBusy">
+                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                            <span>Galéria</span>
+                        </button>
+                        @if (VM.IsCaptureSupported)
+                        {
+                            <button type="button" class="fp-btn fp-btn-sm fp-btn-outline" @onclick="@(() => VM.CapturePhotoAsync())" disabled="@VM.IsBusy">
+                                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                                <span>Kamera</span>
+                            </button>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(VM.SzerkesztettFogas.KepUrl))
+                        {
+                            <button type="button" class="fp-btn fp-btn-sm fp-btn-danger-soft" @onclick="VM.RemovePhoto" disabled="@VM.IsBusy">
+                                Eltávolítás
+                            </button>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(VM.SzerkesztettFogas.KepUrl))
+                    {
+                        <img src="@VM.SzerkesztettFogas.KepUrl" alt="Fogás előnézet" class="fp-catch-photo-preview" />
+                    }
+                </div>
+
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                    <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" @onclick="VM.CloseForm" disabled="@VM.IsBusy">Mégse</button>
+                    <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                        @(VM.IsBusy ? "Mentés..." : "Mentés")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<ConfirmDialog IsVisible="@(VM.TorlesreVaroFogas is not null)"
+               IsBusy="@VM.IsBusy"
+               Title="Fogás törlése"
+               Message="@($"Biztosan ki szeretnéd törölni a(z) {VM.TorlesreVaroFogas?.Halfaj} ({(VM.TorlesreVaroFogas?.DarabAlapuE == true ? $"{VM.TorlesreVaroFogas.Mennyiseg} db" : $"{VM.TorlesreVaroFogas?.SulyKg:0.##} kg")}) fogást a fogási naplóból? A művelet nem vonható vissza.")"
+               ConfirmText="Igen, törlés"
+               CancelText="Mégse"
+               OnConfirm="@(() => VM.ConfirmDeleteAsync())"
+               OnCancel="VM.CancelDelete" />
+
+@* Teljes képernyős galéria-stílusú képnézegető *@
+@if (VM.MegtekintettKepFogas is not null && !string.IsNullOrWhiteSpace(VM.MegtekintettKepFogas.KepUrl))
+{
+    var kepFogas = VM.MegtekintettKepFogas;
+    var kepLista = VM.KepesFogasok;
+    var kepIndex = VM.MegtekintettKepIndex;
+
+    <div class="fp-lightbox" role="dialog" aria-modal="true" aria-label="Fotó teljes képernyőn" @onclick="VM.ClosePhotoViewer">
+        <div class="fp-lightbox-topbar" @onclick:stopPropagation="true">
+            <div class="min-w-0">
+                <div class="fp-lightbox-title text-truncate">@kepFogas.Halfaj</div>
+                <div class="fp-lightbox-sub">
+                    @VM.GetHorgaszNev(kepFogas.ResztvevoId) · @kepFogas.Idopont.ToString("yyyy.MM.dd. HH:mm")
+                    @if (kepLista.Count > 1 && kepIndex >= 0)
+                    {
+                        <span> · @(kepIndex + 1) / @kepLista.Count</span>
+                    }
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                <button type="button"
+                        class="fp-lightbox-btn"
+                        @onclick="VM.TogglePhotoZoom"
+                        aria-label="@(VM.IsPhotoZoomed ? "Kicsinyítés" : "Nagyítás")"
+                        title="@(VM.IsPhotoZoomed ? "Eredeti méret" : "Nagyítás")">
+                    @if (VM.IsPhotoZoomed)
+                    {
+                        <svg class="fp-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+                    }
+                    else
+                    {
+                        <svg class="fp-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>
+                    }
+                </button>
+                <button type="button"
+                        class="fp-lightbox-btn"
+                        @onclick="VM.ClosePhotoViewer"
+                        aria-label="Bezárás"
+                        title="Bezárás">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-lightbox-stage @(VM.IsPhotoZoomed ? "is-zoomed" : string.Empty)">
+            @if (kepLista.Count > 1)
+            {
+                <button type="button"
+                        class="fp-lightbox-nav fp-lightbox-prev"
+                        @onclick="VM.ShowPreviousPhoto"
+                        @onclick:stopPropagation="true"
+                        aria-label="Előző kép">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+            }
+
+            <img src="@kepFogas.KepUrl"
+                 alt="@kepFogas.Halfaj"
+                 class="fp-lightbox-img @(VM.IsPhotoZoomed ? "is-zoomed" : string.Empty)"
+                 @onclick="VM.TogglePhotoZoom"
+                 @onclick:stopPropagation="true" />
+
+            @if (kepLista.Count > 1)
+            {
+                <button type="button"
+                        class="fp-lightbox-nav fp-lightbox-next"
+                        @onclick="VM.ShowNextPhoto"
+                        @onclick:stopPropagation="true"
+                        aria-label="Következő kép">
+                    <svg class="fp-icon" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+            }
+        </div>
+
+        <div class="fp-lightbox-caption" @onclick:stopPropagation="true">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                @if (kepFogas.DarabAlapuE)
+                {
+                    <span class="fp-badge fp-badge-primary">@kepFogas.Mennyiseg db</span>
+                }
+                else
+                {
+                    <span class="fp-badge fp-badge-success">@((kepFogas.SulyKg ?? 0).ToString("0.##")) kg</span>
+                    @if (kepFogas.HosszCm.HasValue)
+                    {
+                        <span class="fp-badge fp-badge-neutral">@kepFogas.HosszCm.Value.ToString("0.#") cm</span>
+                    }
+                }
+                @if (kepFogas.VisszaengedettE)
+                {
+                    <span class="fp-badge fp-badge-success">Visszaengedett</span>
+                }
+                else
+                {
+                    <span class="fp-badge fp-badge-warning">Megtartott</span>
+                }
+                <span class="fp-badge fp-badge-accent">@kepFogas.Csali</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(kepFogas.Megjegyzes))
+            {
+                <div class="fp-lightbox-note mt-2">@kepFogas.Megjegyzes</div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? TuraId { get; set; }
+    private IDisposable? _refreshRegistration;
+    private IDisposable? _backRegistration;
+
+    protected override void OnInitialized()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+        _backRegistration = BackNavigation.RegisterOverlayHandler(TryCloseOverlay);
+    }
+
+    private bool TryCloseOverlay()
+    {
+        if (VM.MegtekintettKepFogas is not null)
+        {
+            _ = InvokeAsync(VM.ClosePhotoViewer);
+            return true;
+        }
+
+        if (VM.TorlesreVaroFogas is not null)
+        {
+            _ = InvokeAsync(VM.CancelDelete);
+            return true;
+        }
+
+        if (VM.IsFormOpen)
+        {
+            _ = InvokeAsync(VM.CloseForm);
+            return true;
+        }
+
+        return false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await VM.LoadAsync(TuraId);
+    }
+
+    private async Task OnTuraSelectedAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var selectedId))
+        {
+            await VM.ChangeTuraAsync(selectedId);
+        }
+    }
+
+    private Task HandleSaveAsync() => VM.SaveFogasAsync();
+
+    private void OnKategoriaSelected(ChangeEventArgs e) => VM.OnKategoriaChanged(e.Value?.ToString());
+
+    private void OnAlkategoriaSelected(ChangeEventArgs e) => VM.OnAlkategoriaChanged(e.Value?.ToString());
+
+    private void OnRendezesSelected(ChangeEventArgs e) => VM.SetRendezesMod(e.Value?.ToString());
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _backRegistration?.Dispose();
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

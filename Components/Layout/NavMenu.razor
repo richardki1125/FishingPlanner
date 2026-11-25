@@ -1,0 +1,74 @@
+@implements IDisposable
+@inject IAuthService AuthService
+
+<div class="fp-nav-brand-wrap">
+    <a class="fp-brand" href="">
+        <span class="fp-brand-mark" aria-hidden="true">
+            <svg class="fp-icon" viewBox="0 0 24 24"><path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/><path d="M18 12v.5"/><path d="M16 17.93a9.77 9.77 0 0 1 0-11.86"/><path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/></svg>
+        </span>
+        <div>
+            <div class="fp-brand-name">FishingPlanner</div>
+            <div class="fp-brand-sub">Túra &amp; Fogási napló</div>
+        </div>
+    </a>
+</div>
+
+<nav class="fp-nav-links">
+    <div class="fp-nav-section-label">Tervezés</div>
+
+    <NavLink class="fp-nav-link" href="" Match="NavLinkMatch.All">
+        <svg class="fp-icon" viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/></svg>
+        <span>Túrák listája</span>
+    </NavLink>
+
+    <NavLink class="fp-nav-link" href="csomaglista">
+        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M4 10a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M8 21v-5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v5"/><path d="M8 10h8"/></svg>
+        <span>Csomaglista</span>
+    </NavLink>
+
+    <NavLink class="fp-nav-link" href="koltsegek">
+        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+        <span>Költségek</span>
+    </NavLink>
+
+    <div class="fp-nav-section-label mt-3">Vízparton</div>
+
+    <NavLink class="fp-nav-link" href="fogasok">
+        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/><path d="M18 12v.5"/><path d="M16 17.93a9.77 9.77 0 0 1 0-11.86"/><path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/></svg>
+        <span>Fogási napló</span>
+    </NavLink>
+
+    <NavLink class="fp-nav-link" href="statisztika">
+        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        <span>Statisztika &amp; Ranglista</span>
+    </NavLink>
+
+    <NavLink class="fp-nav-link" href="profil">
+        <svg class="fp-icon" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span>Profilom</span>
+    </NavLink>
+
+    @if (AuthService.IsAdmin)
+    {
+        <div class="fp-nav-divider"></div>
+
+        <NavLink class="fp-nav-link" href="beallitasok">
+            <svg class="fp-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+            <span>Beállítások</span>
+        </NavLink>
+    }
+</nav>
+
+@code {
+    protected override void OnInitialized()
+    {
+        AuthService.AuthStateChanged += OnAuthStateChanged;
+    }
+
+    private void OnAuthStateChanged(UserSession? session) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        AuthService.AuthStateChanged -= OnAuthStateChanged;
+    }
+}

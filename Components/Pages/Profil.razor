@@ -1,0 +1,281 @@
+@page "/profil"
+@implements IDisposable
+@inject ProfilViewModel VM
+@inject ILiveRefreshService LiveRefresh
+@inject NavigationManager Navigation
+
+<div class="fp-page-header">
+    <div>
+        <h1 class="fp-page-title">Profilom</h1>
+        <p class="fp-subtitle">Saját profilkép, megjelenített név és vízparton eltöltött napok naptára.</p>
+    </div>
+</div>
+
+<AlertBanner ErrorMessage="@VM.ErrorMessage"
+             SuccessMessage="@VM.SuccessMessage"
+             OnDismiss="@VM.ClearMessages" />
+
+@{
+    var previewName = !string.IsNullOrWhiteSpace(VM.Form.MegjelenitettNev)
+        ? VM.Form.MegjelenitettNev.Trim()
+        : VM.Felhasznalonev;
+    var initial = !string.IsNullOrWhiteSpace(previewName) ? previewName[..1] : "H";
+    var naptarCellak = VM.GetHonapCellak();
+    var megtekintettNev = VM.MegtekintettProfil?.MegjelenitesiNev ?? previewName;
+}
+
+<div class="d-flex flex-column gap-3" style="max-width: 720px;">
+    @* Profil szerkesztő kártya *@
+    <div class="fp-card">
+        <div class="d-flex flex-column flex-sm-row align-items-center gap-3 pb-3 mb-3 border-bottom" style="border-color: var(--fp-border) !important;">
+            @if (!string.IsNullOrWhiteSpace(VM.Form.ProfilkepUrl))
+            {
+                <img src="@VM.Form.ProfilkepUrl" alt="@previewName" class="fp-profile-avatar-lg" />
+            }
+            else
+            {
+                <div class="fp-profile-avatar-lg fp-profile-avatar-fallback" aria-hidden="true">@initial</div>
+            }
+
+            <div class="text-center text-sm-start min-w-0 flex-grow-1">
+                <div class="d-flex align-items-center justify-content-center justify-content-sm-start gap-2 mb-1">
+                    <h2 class="h5 mb-0 text-truncate">@previewName</h2>
+                    @if (VM.IsAdmin)
+                    {
+                        <span class="fp-badge fp-badge-primary">Admin</span>
+                    }
+                </div>
+                <div class="small fp-muted mb-2">Bejelentkezési azonosító: <strong>@VM.Felhasznalonev</strong></div>
+
+                <div class="d-flex flex-wrap justify-content-center justify-content-sm-start gap-2">
+                    <button type="button" class="fp-btn fp-btn-sm fp-btn-outline" @onclick="@(() => VM.PickAvatarAsync())" disabled="@VM.IsBusy">
+                        <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                        <span>Profilkép választása</span>
+                    </button>
+                    @if (VM.IsCaptureSupported)
+                    {
+                        <button type="button" class="fp-btn fp-btn-sm fp-btn-outline" @onclick="@(() => VM.CaptureAvatarAsync())" disabled="@VM.IsBusy">
+                            <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                            <span>Kamera</span>
+                        </button>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(VM.Form.ProfilkepUrl))
+                    {
+                        <button type="button" class="fp-btn fp-btn-sm fp-btn-danger-soft" @onclick="VM.RemoveAvatar" disabled="@VM.IsBusy">
+                            Eltávolítás
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <EditForm Model="VM.Form" OnValidSubmit="HandleSaveAsync">
+            <DataAnnotationsValidator />
+
+            <div class="mb-3">
+                <label class="form-label" for="profil-nev">Megjelenített név (ezt látják a többiek)</label>
+                <InputText id="profil-nev"
+                           class="form-control"
+                           @bind-Value="VM.Form.MegjelenitettNev"
+                           placeholder="@($"pl. {VM.Felhasznalonev} helyett becenév vagy teljes név")" />
+                <div class="small fp-muted mt-1">
+                    A bejelentkezéshez továbbra is a felhasználóneved (<strong>@VM.Felhasznalonev</strong>) szükséges, de az appban ez a név jelenik meg.
+                </div>
+                <ValidationMessage For="@(() => VM.Form.MegjelenitettNev)" />
+            </div>
+
+            <div class="d-grid gap-2 d-sm-flex justify-content-sm-between pt-2">
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-danger-soft order-2 order-sm-1" @onclick="VM.SignOutAsync" disabled="@VM.IsBusy">
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    <span>Kijelentkezés</span>
+                </button>
+                <button type="submit" class="fp-btn fp-btn-primary order-1 order-sm-2" disabled="@VM.IsBusy">
+                    @(VM.IsBusy ? "Mentés..." : "Profil mentése")
+                </button>
+            </div>
+        </EditForm>
+    </div>
+
+    @* Horgásznaptár és Eltöltött napok a vízparton *@
+    <div class="fp-card">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+                <h2 class="h5 mb-1">Horgásznaptár</h2>
+                <div class="small fp-muted">@megtekintettNev túranapjai a vízparton</div>
+            </div>
+
+            <div class="fp-water-days-pill">
+                <div class="fp-water-days-label">Eltöltött napok a vízparton</div>
+                <div class="fp-water-days-value">
+                    @VM.EltoltottNapokDb nap
+                    <span class="fp-water-days-sub">· @VM.ResztvettTurakDb túra</span>
+                </div>
+            </div>
+        </div>
+
+        @* Regisztrált felhasználók választója – bármelyik horgásztárs naptára megtekinthető *@
+        @if (VM.RegisztraltFelhasznalok.Count > 1)
+        {
+            <div class="fp-chip-scroll mb-3">
+                @foreach (var u in VM.RegisztraltFelhasznalok)
+                {
+                    var isSelected = u.Id == VM.MegtekintettProfilId;
+                    var uInit = !string.IsNullOrWhiteSpace(u.MegjelenitesiNev) ? u.MegjelenitesiNev[..1] : "H";
+
+                    <button type="button"
+                            class="fp-chip @(isSelected ? "active" : string.Empty)"
+                            @onclick="@(() => VM.SelectCalendarUser(u.Id))">
+                        @if (!string.IsNullOrWhiteSpace(u.ProfilkepUrl))
+                        {
+                            <img src="@u.ProfilkepUrl" alt="" class="fp-chip-avatar" />
+                        }
+                        else
+                        {
+                            <span class="fp-chip-avatar fp-chip-avatar-fallback" aria-hidden="true">@uInit</span>
+                        }
+                        <span>@(u.Id == VM.CurrentUserId ? $"{u.MegjelenitesiNev} (Én)" : u.MegjelenitesiNev)</span>
+                    </button>
+                }
+            </div>
+        }
+
+        @* Hónap léptető *@
+        <div class="fp-cal-header">
+            <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="VM.PrevMonth" aria-label="Előző hónap">
+                <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+
+            <div class="text-center">
+                <div class="fp-cal-month-title">@VM.NaptarHonapCim</div>
+                @if (VM.AktualisHonapNapokDb > 0)
+                {
+                    <div class="small fp-muted">Ebben a hónapban: @VM.AktualisHonapNapokDb túranap</div>
+                }
+            </div>
+
+            <div class="d-flex align-items-center gap-1">
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-ghost" @onclick="VM.GoToToday">Ma</button>
+                <button type="button" class="fp-btn fp-btn-icon fp-btn-outline" @onclick="VM.NextMonth" aria-label="Következő hónap">
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+            </div>
+        </div>
+
+        @* Hét napjai fejléc *@
+        <div class="fp-cal-weekdays" aria-hidden="true">
+            <span>H</span>
+            <span>K</span>
+            <span>Sze</span>
+            <span>Cs</span>
+            <span>P</span>
+            <span>Szo</span>
+            <span>V</span>
+        </div>
+
+        @* Naptár rács *@
+        <div class="fp-cal-grid">
+            @foreach (var cell in naptarCellak)
+            {
+                var cellClass = "fp-cal-day";
+                if (!cell.AktualisHonapE) cellClass += " is-outside";
+                if (cell.MaE) cellClass += " is-today";
+                if (cell.TuraNapE) cellClass += cell.JovoTuraNapE ? " is-trip-future" : " is-trip";
+                if (cell.KivalasztottE) cellClass += " is-selected";
+
+                <button type="button"
+                        class="@cellClass"
+                        @onclick="@(() => VM.SelectDay(cell.Datum))"
+                        disabled="@(!cell.TuraNapE)"
+                        title="@(cell.TuraNapE ? string.Join(", ", cell.Turak.Select(t => t.Nev)) : cell.Datum.ToString("yyyy.MM.dd."))">
+                    <span>@cell.Datum.Day</span>
+                    @if (cell.TuraNapE)
+                    {
+                        <span class="fp-cal-dot" aria-hidden="true"></span>
+                    }
+                </button>
+            }
+        </div>
+
+        @* Jelmagyarázat *@
+        <div class="d-flex flex-wrap align-items-center gap-3 mt-3 pt-2 border-top small fp-muted" style="border-color: var(--fp-border) !important;">
+            <span class="d-inline-flex align-items-center gap-1">
+                <span class="fp-cal-legend-swatch is-trip"></span>
+                <span>Túra napja</span>
+            </span>
+            <span class="d-inline-flex align-items-center gap-1">
+                <span class="fp-cal-legend-swatch is-trip-future"></span>
+                <span>Közelgő túranap</span>
+            </span>
+            <span class="d-inline-flex align-items-center gap-1">
+                <span class="fp-cal-legend-swatch is-today"></span>
+                <span>Ma</span>
+            </span>
+        </div>
+
+        @* Kiválasztott nap túráinak részletei *@
+        @if (VM.KivalasztottNap.HasValue && VM.KivalasztottNapTurai.Count > 0)
+        {
+            <div class="mt-3 p-3 rounded-3 border" style="background-color: var(--fp-surface-alt); border-color: var(--fp-border) !important;">
+                <div class="fp-kpi-label mb-2">@VM.KivalasztottNap.Value.ToString("yyyy. MMMM d.") – Túrák ezen a napon</div>
+                <div class="d-flex flex-column gap-2">
+                    @foreach (var t in VM.KivalasztottNapTurai)
+                    {
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <div class="fw-bold">@t.Nev</div>
+                                <div class="small fp-muted">@t.Helyszin · @t.KezdoDatum.ToString("MM.dd.") – @t.VegDatum.ToString("MM.dd.") (@t.NapokSzama nap)</div>
+                            </div>
+                            <button type="button"
+                                    class="fp-btn fp-btn-sm fp-btn-outline"
+                                    @onclick="@(() => Navigation.NavigateTo($"/fogasok/{t.Id}"))">
+                                Fogások
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @* Csak adminnak látható ugrópont az Adatbiztonság & Offline mentés oldalhoz *@
+    @if (VM.IsAdmin)
+    {
+        <div class="fp-card">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="fp-badge fp-badge-primary">Admin</span>
+                        <span class="fw-bold">Adatbiztonság &amp; Offline mentés</span>
+                    </div>
+                    <div class="small fp-muted">Szinkronizálás, helyi mentés feltöltése és .json export/visszaállítás.</div>
+                </div>
+                <button type="button" class="fp-btn fp-btn-sm fp-btn-outline" @onclick="@(() => Navigation.NavigateTo("/beallitasok"))">
+                    <svg class="fp-icon fp-icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                    <span>Megnyitás</span>
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private IDisposable? _refreshRegistration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        VM.StateChanged += OnStateChanged;
+        _refreshRegistration = LiveRefresh.RegisterRefreshHandler(
+            (isManual, ct) => InvokeAsync(() => VM.RefreshSilentlyAsync(isManual, ct)));
+        await VM.LoadAsync();
+    }
+
+    private Task HandleSaveAsync() => VM.SaveProfileAsync();
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        _refreshRegistration?.Dispose();
+        VM.StateChanged -= OnStateChanged;
+    }
+}

@@ -1,0 +1,29 @@
+@if (IsVisible)
+{
+    <div class="fp-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+        <div class="fp-modal" style="max-width: 430px;">
+            <div class="fp-modal-handle" aria-hidden="true"></div>
+            <h5 id="confirm-dialog-title" class="mb-2">@Title</h5>
+            <p class="fp-muted mb-4">@Message</p>
+            <div class="d-grid gap-2 d-sm-flex justify-content-sm-end">
+                <button type="button" class="fp-btn fp-btn-outline order-2 order-sm-1" disabled="@IsBusy" @onclick="OnCancel">
+                    @CancelText
+                </button>
+                <button type="button" class="fp-btn fp-btn-danger order-1 order-sm-2" disabled="@IsBusy" @onclick="OnConfirm">
+                    @(IsBusy ? "Folyamatban..." : ConfirmText)
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public bool IsBusy { get; set; }
+    [Parameter] public string Title { get; set; } = "Törlés megerősítése";
+    [Parameter] public string Message { get; set; } = "Biztosan törölni szeretnéd ezt az elemet?";
+    [Parameter] public string ConfirmText { get; set; } = "Törlés";
+    [Parameter] public string CancelText { get; set; } = "Mégse";
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}
